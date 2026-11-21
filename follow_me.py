@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # follow_me.py — pan/tilt camera web app: manual control, register faces, lock-on follow.
 #   /usr/bin/python3 follow_me.py [--port 8000] [--target owner] [--no-follow]
-# Open http://<pi-ip>:8000/ . UI lives in follow_me_ui.html (re-read on every page load).
+# Forward port 8000 over SSH and open http://127.0.0.1:8000/ . UI lives in follow_me_ui.html (re-read on every page load).
 #
 # Lock-follow design (measured 2026-11-15 with a camera step-response test):
 #   * servo command -> image moves: ~70 ms to 50 %, ~120 ms to 90 %
@@ -16,7 +16,7 @@
 # (YuNet), full-res 1280x720 "main" only for face crops (SFace). Faces are tracked between
 # frames by IoU (motion-compensated for servo movement) so SFace runs only to (re)verify.
 # JPEG encoding for the browser runs in its own thread, only while someone is watching.
-import argparse, json, os, queue, re, shutil, signal, socketserver, threading, time
+import argparse, json, os, queue, shutil, signal, socketserver, tempfile, threading, time
 from collections import deque
 from http import server
 import cv2, numpy as np
@@ -67,7 +67,6 @@ ENROLL_EVERY_S = 0.12    # min time between samples
 ENROLL_DUP = 0.93        # skip a sample this similar to one we have -> forces varied angles
 ENROLL_DUP_RELAX_S = 15  # ...but after this long, accept near-duplicates (user isn't moving)
 STREAM_FPS = 12          # browser preview, encoded from lores (no resize)
-NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 
 cmds = queue.Queue()
 sface_q, sface_res = queue.Queue(maxsize=4), queue.Queue()
@@ -279,6 +278,16 @@ class Handler(server.BaseHTTPRequestHandler):
         self.send_header("Content-Length", len(body)); self.send_header("Cache-Control", "no-cache")
         self.end_headers(); self.wfile.write(body)
 
+    def parse_request(self):
+        if not super().parse_request():
+            return False
+        if self.server.server_address[0] == "127.0.0.1":
+            host = self.headers.get("Host", "").split(":", 1)[0].lower()
+            if host not in ("localhost", "127.0.0.1"):
+                self.send_error(403)
+                return False
+        return True
+
     def do_GET(self):
         global last_view
         if self.path == "/":
@@ -294,7 +303,7 @@ class Handler(server.BaseHTTPRequestHandler):
         if self.path.startswith("/crop/"):
             name = self.path[6:].split("?")[0]
             p = os.path.join(F.FACES, name, "crops", "001.jpg")
-            if NAME_RE.match(name) and os.path.exists(p):
+            if F.NAME_RE.fullmatch(name) and os.path.exists(p):
                 with open(p, "rb") as f:
                     return self._send(f.read(), "image/jpeg")
         self.send_error(404)
@@ -302,10 +311,19 @@ class Handler(server.BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path != "/api/cmd":
             return self.send_error(404)
+        if self.headers.get_content_type() != "application/json":
+            return self.send_error(415)
+        origin = self.headers.get("Origin")
+        if origin is not None and origin != "http://" + self.headers.get("Host", ""):
+            return self.send_error(403)
         try:
-            body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
-            assert isinstance(body, dict) and "action" in body
-        except Exception:
+            length = int(self.headers.get("Content-Length", 0))
+            if not 0 < length <= 4096:
+                return self.send_error(413)
+            body = json.loads(self.rfile.read(length))
+            if not isinstance(body, dict) or not isinstance(body.get("action"), str):
+                raise ValueError("Invalid command")
+        except (ValueError, UnicodeError):
             return self._send(b'{"ok":false,"error":"bad json"}', "application/json", 400)
         cmds.put(body)
         self._send(b'{"ok":true}', "application/json")
@@ -322,6 +340,7 @@ class Server(socketserver.ThreadingMixIn, server.HTTPServer):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", "--stream", type=int, default=8000)
+    ap.add_argument("--bind", default="127.0.0.1", help="control UI listen address (default: loopback for SSH forwarding)")
     ap.add_argument("--target", "--name", default="owner")
     ap.add_argument("--no-follow", action="store_true", help="start in manual mode")
     a = ap.parse_args()
@@ -335,9 +354,9 @@ def main():
     db = F.load_db()
     target_name = a.target if a.target in db else next(iter(sorted(db)), None)
     follow = not a.no_follow and target_name is not None
-    threading.Thread(target=Server(("", a.port), Handler).serve_forever, daemon=True).start()
+    threading.Thread(target=Server((a.bind, a.port), Handler).serve_forever, daemon=True).start()
     threading.Thread(target=encoder, daemon=True).start()
-    print(f"UI: http://<pi-ip>:{a.port}/", flush=True)
+    print(f"UI: http://{a.bind}:{a.port}/", flush=True)
 
     global DB_SNAP
     DB_SNAP = dict(db)
@@ -417,7 +436,7 @@ def main():
                         msg = f"following {t}" if follow else "follow off"
                 elif act == "enroll":
                     name = str(c.get("name", "")).strip()
-                    if not NAME_RE.match(name):
+                    if not F.NAME_RE.fullmatch(name):
                         msg = "name: letters, digits, - or _ (max 32)"
                     else:
                         follow = False
@@ -426,14 +445,13 @@ def main():
                 elif act == "enroll_cancel" and enroll:
                     enroll, msg = None, "registration cancelled"
                 elif act == "dump":         # debug: write the recent tracking trace to CSV
-                    p = str(c.get("path", "/tmp/follow_trace.csv"))
-                    with open(p, "w") as fh:
+                    with tempfile.NamedTemporaryFile(mode="w", prefix="follow_trace_", suffix=".csv", delete=False) as fh:
                         fh.write("ts,roi,ex,ey,z_pan,z_tilt,aim_pan,aim_tilt,v_pan,v_tilt,cmd_pan,cmd_tilt,face_w\n")
                         fh.writelines(",".join(map(str, r)) + "\n" for r in trace)
-                    msg = f"trace: {len(trace)} rows -> {p}"
+                    msg = f"trace: {len(trace)} rows -> {fh.name}"
                 elif act == "forget":
                     name = str(c.get("name", ""))
-                    if NAME_RE.match(name):
+                    if F.NAME_RE.fullmatch(name):
                         shutil.rmtree(os.path.join(F.FACES, name), ignore_errors=True)
                         db.pop(name, None); DB_SNAP = dict(db)
                         for tr in tracks:

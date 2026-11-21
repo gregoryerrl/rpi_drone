@@ -5,7 +5,7 @@
 #   /usr/bin/python3 face_id.py forget --name owner        # delete stored biometrics
 # Models: OpenCV Zoo YuNet (detect) + SFace (128-d embedding), in ./models.
 # Storage: faces/<name>/embeddings.npy (+ aligned 112x112 crops for review).
-import argparse, os, shutil, time
+import argparse, os, re, shutil, time
 from functools import cache
 import cv2, numpy as np
 from picamera2 import Picamera2
@@ -19,6 +19,15 @@ SIZE = (1280, 720)
 MATCH = 0.363          # SFace cosine threshold recommended by OpenCV
 TILT_CH, PAN_CH = 0, 1  # ch0 tilt (+us = up), ch1 pan (+us = left)
 HOME = {TILT_CH: 1350, PAN_CH: 1500}
+
+NAME_RE = re.compile(r"[A-Za-z0-9_-]{1,32}")
+
+
+def profile_name(value):
+    if not NAME_RE.fullmatch(value):
+        raise argparse.ArgumentTypeError("Use 1–32 letters, digits, underscores or hyphens.")
+    return value
+
 
 @cache
 def detector():
@@ -145,7 +154,7 @@ def recognize(seconds, save):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd", choices=["enroll", "recognize", "forget"])
-    ap.add_argument("--name", default="owner")
+    ap.add_argument("--name", type=profile_name, default="owner")
     ap.add_argument("--samples", type=int, default=40)
     ap.add_argument("--min-width", type=int, default=150, help="min face width px to enroll")
     ap.add_argument("--seconds", type=float, default=15)
