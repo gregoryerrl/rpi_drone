@@ -216,10 +216,12 @@ def open_cam():
 
 # ---------------------------------------------------------------- SFace worker (own thread)
 def sface_worker():
-    rec = cv2.FaceRecognizerSF.create(F.REC_MODEL, "")   # own instance: cv2 nets aren't thread-safe
+    rec = None  # Private to this worker; load on the first recognition job.
     while True:
         tid, img, f, n_sub = sface_q.get()
         try:
+            if rec is None:
+                rec = cv2.FaceRecognizerSF.create(F.REC_MODEL, "")
             e = rec.feature(rec.alignCrop(img, f)).flatten(); e /= np.linalg.norm(e)
             name, s = F.identify(e, DB_SNAP) if DB_SNAP else (None, 0.0)
         except Exception as ex:          # bad landmarks near the border etc.
@@ -358,6 +360,13 @@ def main():
     last_full, cam_fps, req, dt_avg = 0.0, FPS_ACTIVE, None, 1 / FPS_ACTIVE
     last_ex, last_vpan, search_first = None, 0.0, None   # where/how the target left view
     main_cache = [None]
+    lo = None
+
+    def lores_img():
+        nonlocal lo
+        if lo is None:
+            lo = req.make_array("lores")
+        return lo
 
     def main_img():
         """Full-res frame, copied out of the camera buffer only when something needs it."""
@@ -372,7 +381,7 @@ def main():
                 r.release()
             req = cam.capture_request(); main_cache[0] = None
             ts = req.get_metadata()["SensorTimestamp"] / 1e9     # CLOCK_MONOTONIC, s
-            lo = req.make_array("lores")
+            lo = None
             t0 = time.monotonic(); n += 1
             want_fps = FPS_ACTIVE if (follow or enroll is not None) else FPS_IDLE
             if want_fps != cam_fps:
@@ -454,7 +463,7 @@ def main():
             if locked_tr is not None and n % FULL_EVERY:
                 px, py, pw, ph = locked_tr["box"]
                 size = ROI_SCALE * max(pw, ph)
-                src, scale = (lo, 2) if size >= ROI_LORES_MIN else (main_img(), 1)
+                src, scale = (lores_img(), 2) if size >= ROI_LORES_MIN else (main_img(), 1)
                 dets, roi = detect_roi(det_roi, src, scale, px + pw / 2 + sx, py + ph / 2 + sy, size)
                 if not dets:
                     dets, roi, do_full = None, None, True   # lost in ROI -> full frame right now
@@ -465,7 +474,7 @@ def main():
             else:
                 do_full = viewing and t0 - last_full >= 1 / MANUAL_DET_HZ
             if do_full:
-                _, fs = det.detect(lo)
+                _, fs = det.detect(lores_img())
                 dets = [] if fs is None else [f.copy() for f in fs]
                 for f in dets:
                     f[:14] *= W / LW
@@ -672,8 +681,9 @@ def main():
                     hy = H / 2 - (filt.x[1] - pose[1]) * TILT_PX_PER_US
                     if 0 <= hx < W and 0 <= hy < H:
                         hud = (int(hx), int(hy))
+                preview = lores_img()
                 with shared_lock:
-                    shared.update(img=lo, labels=labels, hud=hud); shared["seq"] += 1
+                    shared.update(img=preview, labels=labels, hud=hud); shared["seq"] += 1
     except KeyboardInterrupt:
         pass
     finally:

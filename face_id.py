@@ -6,6 +6,7 @@
 # Models: OpenCV Zoo YuNet (detect) + SFace (128-d embedding), in ./models.
 # Storage: faces/<name>/embeddings.npy (+ aligned 112x112 crops for review).
 import argparse, os, shutil, time
+from functools import cache
 import cv2, numpy as np
 from picamera2 import Picamera2
 from servo_test import PCA9685
@@ -19,8 +20,14 @@ MATCH = 0.363          # SFace cosine threshold recommended by OpenCV
 TILT_CH, PAN_CH = 0, 1  # ch0 tilt (+us = up), ch1 pan (+us = left)
 HOME = {TILT_CH: 1350, PAN_CH: 1500}
 
-det = cv2.FaceDetectorYN.create(DET_MODEL, "", SIZE, 0.85)
-rec = cv2.FaceRecognizerSF.create(REC_MODEL, "")
+@cache
+def detector():
+    return cv2.FaceDetectorYN.create(DET_MODEL, "", SIZE, 0.85)
+
+
+@cache
+def recognizer():
+    return cv2.FaceRecognizerSF.create(REC_MODEL, "")
 
 
 def open_cam():
@@ -32,11 +39,12 @@ def open_cam():
 
 
 def faces_in(img):
-    _, f = det.detect(img)
+    _, f = detector().detect(img)
     return [] if f is None else sorted(f, key=lambda r: -r[2] * r[3])   # largest first
 
 
 def embed(img, face):
+    rec = recognizer()
     crop = rec.alignCrop(img, face)
     e = rec.feature(crop).flatten()
     return e / np.linalg.norm(e), crop
