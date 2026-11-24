@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en" data-operator="__LOCAL__" data-user="__USER__">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Haras Amor · Live camera</title>
+  <style>
+    :root { color-scheme:dark; font:16px/1.5 "DM Sans",system-ui,sans-serif; background:#111614; color:#eff4ee }
+    * { box-sizing:border-box }
+    body { margin:0 auto; max-width:1060px; padding:clamp(16px,4vw,40px) }
+    header,.row { display:flex; align-items:baseline; justify-content:space-between; gap:1rem; flex-wrap:wrap }
+    h1,h2,p { margin:0 }
+    h1 { font-size:clamp(1.5rem,4vw,2.25rem); letter-spacing:-.045em; line-height:1.2 }
+    header p { color:#bdc9c0 }
+    figure { position:relative; background:#080b09; border-radius:12px; overflow:hidden; margin:16px 0; aspect-ratio:16/9 }
+    figure img { display:block; width:100%; height:100%; object-fit:contain }
+    figcaption { position:absolute; inset:0; align-content:center; text-align:center; color:#c9d2cb }
+    section { background:#1b221e; border:1px solid #354039; border-radius:12px; padding:clamp(16px,3vw,26px) }
+    h2 { font-size:1.17rem; font-weight:650 }
+    output { color:#b4f4b1; font:600 1.8rem/1.1 "IBM Plex Mono",ui-monospace,monospace }
+    label { display:block; color:#c7d0c9; margin:6px 0 0 }
+    input[type=range] { display:block; width:100%; height:42px; margin:6px 0 0; accent-color:#a1dda1; cursor:pointer; touch-action:none }
+    input:disabled { cursor:default; opacity:.5 }
+    .scale { display:flex; justify-content:space-between; color:#abb9af; font:.8rem "IBM Plex Mono",ui-monospace,monospace }
+    #status,details { color:#ccd6cf; font-size:.9rem; margin-top:12px }
+    summary,button { cursor:pointer }
+    pre { background:#101512; border-radius:6px; padding:10px; white-space:pre-wrap; overflow-wrap:anywhere }
+    a { color:#b4f4b1 }
+    button { color:#e2eee4; background:#26362b; border:1px solid #546e5a; border-radius:6px; padding:6px 12px; margin-top:8px }
+    :focus-visible { outline:2px solid #b4f4b1; outline-offset:3px }
+    [hidden] { display:none !important }
+  </style>
+  <script defer src="/controls.js"></script>
+</head>
+<body>
+<main>
+  <header><h1>Haras Amor</h1><p>Live camera</p></header>
+  <figure>
+    <img id="video" src="/stream.mjpg" alt="Live view from the Pi camera">
+    <figcaption id="video-error" hidden>Camera unavailable. Reload to try again.</figcaption>
+  </figure>
+  <section aria-labelledby="bench-title">
+    <div class="row"><h2 id="bench-title">Motor bench</h2><output id="value" for="throttle">0%</output></div>
+    <label for="throttle">All four motors · propellers off</label>
+    <input id="throttle" type="range" min="0" max="__MAX__" step="1" value="0" autocomplete="off"
+           aria-describedby="status" disabled>
+    <div class="scale" aria-hidden="true"><span>0%</span><span>__MAX__%</span></div>
+    <p id="status" role="status">Connecting…</p>
+    <button type="button" id="reconnect" hidden>Reconnect controller</button>
+    <details id="ssh" hidden>
+      <summary>Open motor controls through SSH</summary>
+      <p>On your laptop, keep this command running and open the operator preview.</p>
+      <pre id="tunnel"></pre>
+      <a href="http://127.0.0.1:8080/" rel="noreferrer">Open operator preview</a>
+    </details>
+  </section>
+</main>
+</body>
+</html>
