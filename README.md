@@ -1,5 +1,7 @@
 # Raspberry Pi drone project template
 
+Use a TX16S right stick to aim a physical camera mount and SG to switch object tracking on or off. [RC pan-tilt camera setup](rc_camera/README.md)
+
 Use **Use this template → Create a new repository** on GitHub, then clone your new repository onto the Pi. This template provides a camera preview, a pan/tilt application, and bench utilities. The tested platform is a Raspberry Pi 5 Model B running 64-bit Raspberry Pi OS Trixie with an IMX708 NoIR camera. The [Pi setup template](https://github.com/gregoryerrl/rpi_dev) provides optional SSH access and a fallback hotspot.
 
 ## Set up a fresh checkout

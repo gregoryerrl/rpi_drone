@@ -1,0 +1,3 @@
+[submodule "research/cv-research"]
+	path = research/cv-research
+	url = https://github.com/gregoryerrl/cv-research.git

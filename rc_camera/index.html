@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RC pan-tilt camera</title>
+<style>
+  :root{color-scheme:dark;font:16px/1.4 "DM Sans",system-ui,sans-serif;background:#131a17;color:#edf5ef}
+  body{max-width:900px;margin:0 auto;padding:clamp(16px,4vw,40px)}
+  header,footer{display:flex;gap:12px;justify-content:space-between;align-items:baseline;flex-wrap:wrap}
+  h1{font-size:clamp(1.4rem,4vw,2rem);letter-spacing:-.03em;margin:0}
+  #mode{color:#a3e7b9;font-weight:650}
+  img{display:block;width:100%;aspect-ratio:16/9;background:#0a100c;border-radius:8px;margin:16px 0}
+  p{margin:.4em 0}#channels,#pose{font: .86rem/1.5 ui-monospace,monospace;color:#b7c8bb}
+</style>
+<main>
+  <header><h1>RC pan-tilt camera</h1><strong id="mode" role="status">Connecting…</strong></header>
+  <img id="view" alt="Live camera with a selection crosshair" width="640" height="360" style="height:auto">
+  <p id="message" aria-live="polite">Waiting for video…</p>
+  <footer><span id="channels"></span><span id="pose"></span></footer>
+</main>
+<script>
+const el = id => document.getElementById(id);
+let previous;
+async function next() {
+  try {
+    if (document.hidden) return;
+    const r = await fetch('/frame.jpg', {cache:'no-store', signal:AbortSignal.timeout(2500)});
+    if (!r.ok) throw Error((await r.json()).error);
+    const state = JSON.parse(r.headers.get('X-Camera'));
+    const url = URL.createObjectURL(await r.blob());
+    el('view').src = url;
+    if (previous) URL.revokeObjectURL(previous);
+    previous = url;
+    el('mode').textContent = state.pulses ? state.mode : 'RC disconnected';
+    if (el('message').textContent !== state.message) el('message').textContent = state.message;
+    el('channels').textContent = state.pulses ? state.pulses.map((v,i) => 'CH'+[1,2,8][i]+' '+v+' µs').join(' · ') : '';
+    el('pose').textContent = 'Pan '+state.pose[0]+' µs · Tilt '+state.pose[1]+' µs';
+  } catch (e) {
+    el('mode').textContent = 'Video offline';
+    el('message').textContent = e.message;
+    el('channels').textContent = el('pose').textContent = '';
+  } finally {
+    setTimeout(next, document.hidden ? 700 : 65);
+  }
+}
+next();
+</script>
+</html>

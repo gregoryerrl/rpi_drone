@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RC input monitor</title>
+<style>
+  :root {color-scheme:light; font:16px/1.4 "DM Sans",system-ui,sans-serif; color:#18251f; background:#f5f7f4}
+  * {box-sizing:border-box}
+  body {max-width:1020px; margin:0 auto; padding:24px clamp(14px,4vw,48px) 40px}
+  header,.section-head,.actions,.channel-top {display:flex;align-items:center;justify-content:space-between;gap:14px}
+  header {margin-bottom:22px;flex-wrap:wrap}
+  h1,h2,p {margin:0}
+  h1 {font-size:clamp(1.5rem,4vw,2.15rem);letter-spacing:-.045em}
+  h2 {font-size:1.05rem}
+  #status {font-size:.9rem;color:#655936}
+  #status::before {content:"";display:inline-block;width:8px;height:8px;margin-right:8px;border-radius:50%;background:currentColor}
+  #status.connected {color:#176849}
+  .last {background:#182e25;color:#f3fcf6;border-radius:12px;padding:20px clamp(16px,4vw,32px);min-height:129px}
+  .last h2 {font-size:.89rem;color:#bed7c9;font-weight:550}
+  #last {font-size:clamp(1.5rem,4.5vw,2.6rem);line-height:1.15;letter-spacing:-.04em;margin:8px 0}
+  #detail,.value,.num {font-family:"IBM Plex Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums}
+  #detail {font-size:.81rem;color:#cce4d5}
+  .section-head {margin:24px 0 10px;flex-wrap:wrap;gap:4px 14px}
+  .find {font-size:.84rem;padding:5px 9px;border:1px solid #a5b7aa;background:#fff;border-radius:5px;color:inherit}
+  .hint {font-size:.84rem;color:#526158}
+  #channels {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,185px),1fr));gap:8px}
+  button,input {font:inherit}
+  button {cursor:pointer}
+  .channel {text-align:left;width:100%;border:1px solid #c4d0c7;border-radius:8px;background:#fff;color:inherit;padding:11px 13px;min-height:85px}
+  .channel:hover {border-color:#618875}
+  .channel.active {border-color:#25855b;background:#e0f6e8;box-shadow:inset 3px 0 #25855b}
+  .num,.value {font-size:.83rem}
+  .name {display:block;min-height:1.35em;font-size:.82rem;overflow-wrap:anywhere;margin:3px 0;color:#364f40}
+  .track {display:block;height:4px;background:#e1e8e2;border-radius:2px;position:relative}
+  .track i {position:absolute;top:-2px;width:6px;height:8px;transform:translateX(-50%);background:#47715a;border-radius:2px}
+  .active .track i {background:#0c7443}
+  dialog {width:min(355px,90vw);padding:20px;color:inherit;background:#fff;border:1px solid #b5c5b9;border-radius:10px}
+  dialog::backdrop {background:rgb(16 33 22 / .4)}
+  label {display:block;font-size:1.05rem;font-weight:650}
+  input {margin:10px 0 7px;width:100%;padding:7px;border:1px solid #a5b7aa;border-radius:5px}
+  .actions {justify-content:flex-end;gap:8px;margin-top:15px}
+  .actions button {padding:6px 12px;background:#fff;color:inherit;border:1px solid #a5b7aa;border-radius:5px}
+  .actions button[type=submit] {background:#175b3d;color:white;border-color:#175b3d}
+  :focus-visible {outline:3px solid #d08025;outline-offset:2px}
+  @media (max-width:520px) {#channels {grid-template-columns:repeat(2,minmax(0,1fr))}.channel {padding:9px}.channel-top {gap:4px}.section-head {align-items:baseline}}
+</style>
+<main>
+  <header><h1>RC input monitor</h1><span id="status" role="status">Connecting…</span></header>
+  <section class="last" aria-labelledby="last-label">
+    <h2 id="last-label">Last moved</h2>
+    <p id="last">Waiting for receiver</p>
+    <p id="detail"></p>
+  </section>
+  <div class="section-head"><h2>Channels</h2><button class="find" id="find" type="button">Identify 3-position switch</button></div>
+  <p class="hint" style="margin-bottom:8px">Move one control, then tap its channel to name it.</p>
+  <div id="channels"></div>
+  <dialog id="editor">
+    <form id="name-form">
+      <label for="name" id="name-label">Control name</label>
+      <input id="name" list="suggestions" maxlength="48" autocomplete="off" placeholder="e.g. Switch SA">
+      <datalist id="suggestions"></datalist>
+      <p class="hint">Names are saved in this browser.</p>
+      <div class="actions"><button id="cancel" type="button">Cancel</button><button type="submit">Save</button></div>
+    </form>
+  </dialog>
+  <dialog id="finder" aria-labelledby="find-label">
+    <label for="switch-name" id="find-label">Identify a three-position switch</label>
+    <input id="switch-name" list="suggestions" maxlength="48" value="Switch SG">
+    <p id="switch-step" class="hint" role="status"></p>
+    <div class="actions"><button id="find-close" type="button">Close</button><button id="capture" type="button">Capture Up</button></div>
+  </dialog>
+</main>
+<script>
+  'use strict';
+  const byId = id => document.getElementById(id);
+  const cards = new Map();
+  const editor = byId('editor');
+  let source, names = {}, positions = {}, editing, state;
+  const stops = ['Up','Middle','Down'];
+  let samples = [], captured = [];
+  const suggestions = ['Right stick horizontal', 'Right stick vertical', 'Left stick horizontal', 'Left stick vertical',
+    ...Array.from('ABCDEFGH', letter => 'Switch S' + letter), 'S1 dial', 'S2 dial', 'Left slider', 'Right slider'];
+  for (const label of suggestions) byId('suggestions').append(new Option(label));
+
+  function storageKey() { return 'rc-inputs.v1.' + source; }
+  function labelFor(number) { return names[number] || state.labels?.[number] || ''; }
+  function displayName(ch) {
+    const name = labelFor(ch.number);
+    const index = positions[ch.number]?.findIndex(value => Math.abs(value - ch.value) <= 50);
+    return index >= 0 ? name + ' · ' + stops[index] : name;
+  }
+  function saveNames() {
+    try {
+      localStorage.setItem(storageKey(), JSON.stringify(names));
+      localStorage.setItem(storageKey()+'.positions', JSON.stringify(positions));
+    } catch {}
+  }
+  function identify(number) {
+    editing = number;
+    byId('name-label').textContent = 'Name for CH ' + number;
+    byId('name').value = labelFor(number);
+    editor.showModal();
+    byId('name').select();
+  }
+  byId('cancel').onclick = () => editor.close();
+  byId('name-form').onsubmit = event => {
+    event.preventDefault();
+    const value = byId('name').value.trim();
+    if (value !== labelFor(editing)) delete positions[editing];
+    if (value) names[editing] = value;
+    else delete names[editing];
+    saveNames();
+    editor.close();
+    render(state);
+  };
+  function promptPosition() {
+    samples = [];
+    const step = stops[captured.length];
+    byId('switch-step').textContent = 'Hold the switch in the ' + step.toLowerCase() + ' position, then capture.';
+    byId('capture').textContent = 'Capture ' + step;
+    byId('capture').disabled = true;
+  }
+  function beginSwitch() {
+    captured = [];
+    byId('switch-name').disabled = false;
+    promptPosition();
+  }
+  byId('find').onclick = () => { beginSwitch(); byId('finder').showModal(); };
+  byId('find-close').onclick = () => byId('finder').close();
+  function sampleSwitch(next) {
+    if (!byId('finder').open || captured.length >= 3) return;
+    const now = performance.now();
+    if (next.status !== 'Receiving') {
+      beginSwitch();
+      byId('switch-step').textContent = 'Waiting for receiver. Start with the switch in the up position.';
+      return;
+    }
+    if (!samples.length) promptPosition();
+    samples = samples.filter(row => now - row.at < 750);
+    samples.push({at:now, channels:new Map(next.channels.map(ch => [ch.number,ch.value]))});
+    byId('capture').disabled = samples.length < 3 || now - samples[0].at < 320;
+  }
+  byId('capture').onclick = () => {
+    if (captured.length === 3) { beginSwitch(); return; }
+    const name = byId('switch-name').value.trim();
+    if (!name) { byId('switch-name').focus(); return; }
+    if (!samples.length || performance.now() - samples.at(-1).at > 450) { promptPosition(); return; }
+    const held = new Map();
+    for (const ch of state.channels) {
+      const values = samples.map(row => row.channels.get(ch.number)).filter(Number.isFinite).sort((a,b) => a-b);
+      const median = values[Math.floor(values.length/2)];
+      if (values.filter(v => Math.abs(v-median) <= 35).length >= Math.ceil(samples.length*.75)) held.set(ch.number, median);
+    }
+    captured.push(held);
+    byId('switch-name').disabled = true;
+    if (captured.length < 3) { promptPosition(); return; }
+    const [up, middle, down] = captured;
+    const found = [...up.keys()].filter(n => {
+      const a = middle.get(n) - up.get(n), b = down.get(n) - middle.get(n);
+      return Math.abs(a) >= 75 && Math.abs(b) >= 75 && a*b > 0;
+    });
+    let result;
+    if (found.length === 1) {
+      const n = found[0];
+      names[n] = name; positions[n] = captured.map(row => row.get(n));
+      saveNames(); render(state);
+      result = name + ' is CH ' + n + '. Its three positions are saved in this browser.';
+    } else if (found.length) {
+      result = 'Several channels matched (' + found.join(', ') + '). Repeat while moving only that switch.';
+    } else {
+      result = 'No channel held three distinct positions. If no output bar moves in Channel Monitor, open MDL → Mixes and assign the switch as the source of an unused transmitted channel.';
+    }
+    byId('switch-step').textContent = result;
+    byId('capture').textContent = 'Try again';
+    byId('capture').disabled = false;
+  };
+  function makeCard(number) {
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = 'channel';
+    card.innerHTML = '<span class="channel-top"><b class="num"></b><span class="value"></span></span><span class="name"></span><span class="track"><i></i></span>';
+    card.querySelector('.num').textContent = 'CH ' + number;
+    card.onclick = () => identify(number);
+    byId('channels').append(card);
+    cards.set(number, card);
+    return card;
+  }
+  function render(next) {
+    state = next;
+    if (next.source && source !== next.source) {
+      source = next.source;
+      try { names = JSON.parse(localStorage.getItem(storageKey())) || {}; } catch { names = {}; }
+      try { positions = JSON.parse(localStorage.getItem(storageKey()+'.positions')) || {}; } catch { positions = {}; }
+    }
+    sampleSwitch(next);
+    const online = next.status === 'Receiving';
+    byId('status').classList.toggle('connected', online);
+    byId('status').textContent = online ? 'Receiving · ' + next.channels.length + ' channels' : next.status;
+    const active = next.channels.filter(ch => ch.active).map(ch => ch.number);
+    const last = active.length ? active : next.latest.map(change => change.number);
+    byId('last').textContent = last.length ? last.map(n => displayName(next.channels.find(ch => ch.number === n)) || 'CH ' + n).join(' + ')
+      : online ? 'Move a stick or switch' : next.status;
+    byId('detail').textContent = next.latest.map(c => 'CH ' + c.number + ' · ' + c.before + ' → ' + c.after + ' µs').join('   /   ');
+    const present = new Set(next.channels.map(ch => ch.number));
+    for (const [number, card] of cards) {
+      if (!present.has(number)) { card.remove(); cards.delete(number); }
+    }
+    for (const ch of next.channels) {
+      const card = cards.get(ch.number) || makeCard(ch.number);
+      card.classList.toggle('active', ch.active);
+      card.querySelector('.value').textContent = ch.value + ' µs';
+      card.querySelector('.name').textContent = displayName(ch);
+      card.querySelector('i').style.left = Math.max(0, Math.min(100, (ch.value - 850) / 13)) + '%';
+    }
+  }
+  async function poll() {
+    try {
+      if (!document.hidden) {
+        const response = await fetch('/api/inputs', {cache:'no-store',signal:AbortSignal.timeout(2500)});
+        if (!response.ok) throw Error();
+        render(await response.json());
+      }
+    } catch { render({status:'Pi disconnected', channels:[], latest:[]}); }
+    setTimeout(poll, document.hidden ? 500 : 120);
+  }
+  poll();
+</script>
+</html>
