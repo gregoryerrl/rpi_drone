@@ -40,6 +40,8 @@
     pre { background:#101512; border-radius:6px; padding:10px; white-space:pre-wrap; overflow-wrap:anywhere }
     a { color:#b4f4b1 }
     button { color:#e2eee4; background:#26362b; border:1px solid #546e5a; border-radius:6px; padding:6px 12px; margin-top:8px }
+    .hold-power { min-height:44px; font:inherit; touch-action:none; user-select:none }
+    .hold-power:active:enabled { background:#37513e }
     #motor-stop { background:#a32826; color:#fff; border:2px solid #ff9c91; font-family:inherit; font-size:1rem; font-weight:700; min-height:44px; padding:8px 16px; margin:0 }
     #motor-stop kbd { font:normal .75rem ui-monospace,monospace; margin-left:4px }
     #stop-status { flex-basis:100%; color:#ffb9b0 }
@@ -63,10 +65,11 @@
   </figure>
   <section aria-labelledby="bench-title">
     <div class="row"><h2 id="bench-title">Motor bench</h2><output id="value" for="throttle">0%</output></div>
-    <label for="throttle" id="power-label">All four motors · propellers off</label>
+    <label for="throttle">Selected bench level · all four motors · propellers off</label>
     <input id="throttle" type="range" min="0" max="__MAX__" step="1" value="0" autocomplete="off"
            aria-describedby="status" disabled>
     <div class="scale" aria-hidden="true"><span>0%</span><span>__MAX__%</span></div>
+    <button type="button" id="hold-bench" class="hold-power" aria-describedby="status" disabled>Hold to run bench</button>
     <p id="status" role="status">Connecting…</p>
     <button type="button" id="reset-stop" hidden>Reset motor stop</button>
     <button type="button" id="reconnect" hidden>Reconnect controller</button>
@@ -78,13 +81,15 @@
     </details>
   </section>
   <section aria-labelledby="level-title">
-    <div class="row"><h2 id="level-title">Roll and pitch</h2>
+    <div class="row"><h2 id="level-title">Ground jig · roll and pitch</h2>
       <button type="button" id="auto-stabilize" role="switch" aria-checked="false" disabled>Auto stabilize · Off</button>
     </div>
     <p id="jig-status" role="status">Selecting Auto stabilize starts a disarmed angle check.</p>
+    <p>This control requires the FC to report on ground. Loss of that indication ends the session and requests disarm if armed.</p>
+    <p id="last-arm" hidden></p>
     <p id="jig-power-note" hidden>Restrained jig only. Keep the motor-power disconnect within reach.
       Arming can spin motors at zero stick. Individual motor outputs can exceed the 50% stick setting.
-      While holding throttle with the mouse, use the arrow keys to adjust roll and pitch.</p>
+      While holding the jig button, use the arrow keys to adjust roll and pitch.</p>
     <div class="jig-targets">
       <div><label for="target-roll">Roll target · <output id="target-roll-value" for="target-roll">0°</output></label>
         <input id="target-roll" type="range" min="-__TRIAL_TILT__" max="__TRIAL_TILT__" step="1" value="0" disabled>
@@ -96,6 +101,11 @@
     <button type="button" id="target-level" disabled>Level (0° / 0°)</button>
     <button type="button" id="arm-jig" hidden>Arm secured jig…</button>
     <p id="fc-target"></p>
+    <div class="row"><label for="jig-throttle">Selected jig throttle</label><output id="jig-value" for="jig-throttle">0%</output></div>
+    <input id="jig-throttle" type="range" min="0" max="__MAX__" step="1" value="0" autocomplete="off"
+           aria-describedby="jig-status" disabled>
+    <div class="scale" aria-hidden="true"><span>0%</span><span>__MAX__%</span></div>
+    <button type="button" id="hold-jig" class="hold-power" aria-describedby="jig-status" disabled>Hold to apply jig throttle</button>
     <p id="level-status" role="status">Waiting for FC telemetry.</p>
     <div class="level-table">
       <table aria-label="Jig attitude and proposed corrections">

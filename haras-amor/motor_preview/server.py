@@ -68,7 +68,7 @@ async def held_slider(ws, link, hold):
             break
         if (reply is None or time.monotonic() >= deadline or reply.get("poll") != ticket
                 or reply.get("hold") != hold):
-            raise BenchError("Hold expired. Release the slider and reconnect.")
+            raise BenchError("Hold expired. Release the bench button and reconnect.")
         await link.set_percent(reply.get("percent"))
         # Listen for release during the interval between refreshes.
         early = await message(ws, POLL_PAUSE)
@@ -98,7 +98,12 @@ async def run_jig(ws, link):
                     or set(reply) != {"jig_poll", "roll", "pitch", "throttle", "arm"}
                     or reply["jig_poll"] != ticket):
                 raise ValueError("Jig input expired. Start a new session.")
-            link.jig.update(reply["roll"], reply["pitch"], reply["throttle"], reply["arm"], MAX_PERCENT)
+            try:
+                link.jig.update(reply["roll"], reply["pitch"], reply["throttle"], reply["arm"], MAX_PERCENT)
+            except ValueError as exc:
+                if reply["arm"] is True and not link.jig.arm_pending:
+                    link.jig.record_arm("blocked", f"The Pi blocked the arm request. {exc}")
+                raise
             await asyncio.sleep(.06)
     finally:
         link.jig.end()
@@ -133,7 +138,7 @@ async def operate(ws, link):
             continue  # An old jig ticket cannot start a bench-slider hold.
         hold = data.get("hold")
         if set(data) != {"hold"} or type(hold) is not int or hold <= last_hold:
-            raise BenchError("Expected a new slider press.")
+            raise BenchError("Expected a new bench-button hold.")
         last_hold = hold
         try:
             await held_slider(ws, link, hold)
@@ -154,6 +159,7 @@ class Preview:
         self.open_link = open_link
         self.operator = None
         self.operator_link = None
+        self.last_arm_report = None
         self.latch = StopLatch(marker)
         self.jig_stop_message = ""
         self.page = (HERE / "index.html").read_text().replace("__MAX__", str(MAX_PERCENT))
@@ -174,15 +180,21 @@ class Preview:
 
     async def leveling_state(self, request):
         link = self.operator_link
+        operator_view = local_page(request)
         if link is None:
-            return web.json_response({"message": "Open the SSH operator preview to receive FC telemetry."})
-        try:
-            link.check()
-        except BenchError as exc:
-            return web.json_response({"message": str(exc)})
-        state = link.leveling.snapshot(time.monotonic(), *link.jig.target)
-        if local_page(request) and link.jig.selected:
-            state["jig"] = link.jig.status()
+            state = {"message": "Open the SSH operator preview to receive FC telemetry."}
+        else:
+            try:
+                link.check()
+            except BenchError as exc:
+                state = {"message": str(exc)}
+            else:
+                state = link.leveling.snapshot(time.monotonic(), *link.jig.target)
+                if operator_view and link.jig.selected:
+                    state["jig"] = link.jig.status()
+        last = (link.jig.last_arm_report if link else None) or self.last_arm_report
+        if operator_view and last:
+            state["last_arm_attempt"] = last
         return web.json_response(state)
 
     async def stop_status(self, request):
@@ -288,6 +300,8 @@ class Preview:
                 if link is not None:
                     link.close()
             finally:
+                if link is not None and link.jig.last_arm_report:
+                    self.last_arm_report = link.jig.last_arm_report
                 if link is not None and link.jig.stop_pending:
                     self.jig_stop_message = link.jig.stop_message
                 self.operator_link = None

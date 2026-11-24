@@ -1,8 +1,10 @@
 "use strict";
 const el = id => document.getElementById(id);
-const slider = el("throttle"), statusLine = el("status"), reconnect = el("reconnect");
+const benchSlider = el("throttle"), jigSlider = el("jig-throttle");
+const benchHold = el("hold-bench"), jigHold = el("hold-jig");
+const statusLine = el("status"), reconnect = el("reconnect");
 const canControl = document.documentElement.dataset.operator === "yes";
-const idleText = "PX4 disarmed. Hold and drag the slider. Release to stop.";
+const idleText = "Bench idle. Select a level, then hold the bench button to run.";
 let socket = null, ready = false, gesture = null, sequence = 0, pollTimer = null;
 const stopButton = el("motor-stop"), resetButton = el("reset-stop"), stopStatus = el("stop-status");
 let latched = null, stopToken = null, actionId = 0, changingStop = false, needStopConfirmation = false;
@@ -29,7 +31,11 @@ function jigStateLabel() {
 
 function controls() {
   const enabled = canControl && ready && latched === false && !changingStop;
-  slider.disabled = !enabled || (jig && (!jigReady || !jigArmed || endingJig));
+  benchSlider.disabled = !enabled || jig || !!gesture;
+  benchHold.disabled = !enabled || jig || Number(benchSlider.value) === 0;
+  const jigEnabled = enabled && jigReady && jigArmed && !endingJig;
+  jigSlider.disabled = !jigEnabled || !!gesture;
+  jigHold.disabled = !jigEnabled || Number(jigSlider.value) === 0;
   jigSwitch.disabled = !enabled || endingJig || (!jig && !!gesture);
   jigSwitch.setAttribute("aria-checked", String(jig && jigReady && !endingJig));
   setText(jigSwitch, "Auto stabilize · " + jigStateLabel());
@@ -38,8 +44,6 @@ function controls() {
   armButton.hidden = !enabled || !jigReady || jigArmed || endingJig;
   armButton.disabled = jigArming || armRequest || !fcLevelTarget || angles.some(a => Number(a.value) !== 0);
   el("jig-power-note").hidden = !jig;
-  setText(el("power-label"), jig ? "Jig throttle stick · hold to apply, release to end the run" :
-      "All four motors · propellers off");
 }
 
 function renderAngles() {
@@ -89,6 +93,7 @@ jigSwitch.addEventListener("click", () => {
   if (!ready || latched !== false || gesture || socket?.readyState !== WebSocket.OPEN) return;
   jig = true;
   levelTarget();
+  setText(statusLine, "The motor bench is idle while the ground jig is selected.");
   el("jig-status").textContent = "Selecting PX4 Stabilized with zero throttle…";
   socket.send(JSON.stringify({jig:"on"}));
 });
@@ -106,16 +111,21 @@ armButton.addEventListener("click", () => {
   }
 });
 
-function showLevel() {
-  if (!gesture) slider.value = "0";
-  el("value").value = slider.value + "%";
+function showLevels() {
+  el("value").value = benchSlider.value + "%";
+  el("jig-value").value = jigSlider.value + "%";
+  controls();
+}
+
+function resetLevels() {
+  benchSlider.value = jigSlider.value = "0";
+  showLevels();
 }
 
 function release() {
   const old = gesture;
   gesture = null;
   clearTimeout(pollTimer);
-  showLevel();
   if (old?.jig) {
     endJig();
   } else if (old && socket?.readyState === WebSocket.OPEN) {
@@ -130,6 +140,7 @@ function disconnect(reason) {
   const old = socket;
   socket = null;
   ready = false;
+  resetLevels();
   if (jig) el("jig-status").textContent = "Jig link lost. If motors are powered, use the motor-power disconnect.";
   clearJig();
   if (old) old.close();
@@ -142,6 +153,7 @@ function applyStopState(state) {
   if (state.stopped) {
     needStopConfirmation = false;
     release();
+    resetLevels();
   }
   latched = state.stopped;
   stopToken = state.token || null;
@@ -170,7 +182,6 @@ async function changeStop(reset) {
   changingStop = true;
   latched = true;
   if (!reset) needStopConfirmation = true;
-  slider.disabled = true;
   resetButton.hidden = true;
   release();
   stopStatus.textContent = reset ? "Resetting motor stop…" : "Sending motor stop…";
@@ -232,7 +243,7 @@ function connect() {
       statusLine.textContent = idleText;
       if (msg.jig_disarmed) el("jig-status").textContent = "Auto stabilize off. PX4 reports disarmed.";
     } else if (msg.jig_off) {
-      if (gesture?.jig) { gesture = null; showLevel(); }
+      if (gesture?.jig) gesture = null;
       clearJig();
       el("jig-status").textContent = [msg.jig_off, msg.fc_stop].filter(Boolean).join(" ");
       statusLine.textContent = msg.fc_stop || idleText;
@@ -253,25 +264,26 @@ function connect() {
           "PX4 reports armed. The Pi is sending zero throttle. Motors may idle." :
           "PX4 reports armed. The percentage shows the throttle stick command. Motor speed is unmeasured.";
       else if (jigReady) detail = "PX4 is disarmed at 0% throttle. The sliders set angle targets. The motors cannot move the jig or resist a tilt.";
-      setText(el("jig-status"), [detail, msg.notice].filter(Boolean).join(" "));
-      let powerStatus = "Jig throttle is at zero.";
-      if (jigArmed) powerStatus = "Releasing the throttle ends the run and requests disarm.";
+      let powerStatus = "";
+      if (jigArmed) powerStatus = "Releasing the jig button ends the run and requests disarm.";
       else if (jigReady && !jigArming && angles.some(a => Number(a.value) !== 0))
         powerStatus = "Arming requires both angle targets at 0°.";
       else if (jigReady && !jigArming && !fcLevelTarget)
         powerStatus = "Waiting for PX4 to report level angle targets.";
-      setText(statusLine, powerStatus);
+      else if (jigReady && !jigArming)
+        powerStatus = "Arm secured jig is a separate ground-test control.";
+      setText(el("jig-status"), [detail, msg.notice || powerStatus].filter(Boolean).join(" "));
       setText(el("fc-target"), msg.fc_target ? "FC target · roll " + msg.fc_target[0] + "° · pitch " +
           msg.fc_target[1] + "°" : "Waiting for the FC attitude target.");
       const arm = armRequest;
       armRequest = false;
       ws.send(JSON.stringify({jig_poll:msg.jig_poll, roll:Number(angles[0].value), pitch:Number(angles[1].value),
-          throttle:jigArmed && gesture?.jig ? Number(slider.value) : 0, arm}));
+          throttle:jigArmed && gesture?.jig ? gesture.percent : 0, arm}));
       controls();
-    } else if (msg.poll && msg.hold === gesture?.id) {
+    } else if (msg.poll && gesture && !gesture.jig && msg.hold === gesture.id) {
       if (document.hidden || !document.hasFocus()) { release(); return; }
       expectPoll();
-      ws.send(JSON.stringify({hold: gesture.id, poll: msg.poll, percent: Number(slider.value)}));
+      ws.send(JSON.stringify({hold: gesture.id, poll: msg.poll, percent: gesture.percent}));
     } else if (msg.released && !gesture) {
       statusLine.textContent = idleText;
     }
@@ -284,50 +296,62 @@ function connect() {
   };
 }
 
-function start(kind, key) {
-  if (!ready || latched !== false || gesture || document.hidden || socket?.readyState !== WebSocket.OPEN) return false;
+function start(button, kind, key) {
+  if (button.disabled || (button === jigHold) !== jig || !ready || latched !== false || gesture ||
+      document.hidden || !document.hasFocus() || socket?.readyState !== WebSocket.OPEN) return false;
   if (jig && (!jigReady || !jigArmed || endingJig)) return false;
-  gesture = {id: ++sequence, kind, key, jig};
+  const percent = Number((jig ? jigSlider : benchSlider).value);
+  if (!percent) return false;
+  gesture = {id: ++sequence, kind, key, jig, percent};
   if (!jig) {
     expectPoll();
     socket.send(JSON.stringify({hold: gesture.id}));
+    statusLine.textContent = "Bench command requested at " + percent + "%. Release to stop.";
   }
   controls();
-  statusLine.textContent = "Release to return all four motors to zero.";
   return true;
 }
 
-slider.addEventListener("pointerdown", event => {
-  if (event.button === 0 && event.isPrimary && start("pointer", event.pointerId)) {
-    try { slider.setPointerCapture(event.pointerId); }
-    catch { release(); }
-  }
-});
 function pointerEnd(event) {
   if (gesture?.kind === "pointer" && event.pointerId === gesture.key) release();
 }
 window.addEventListener("pointerup", pointerEnd, true);
 window.addEventListener("pointercancel", pointerEnd, true);
-slider.addEventListener("lostpointercapture", pointerEnd);
 window.addEventListener("pointermove", event => { if (event.buttons === 0) pointerEnd(event); });
-const adjustKeys = new Set(["ArrowLeft","ArrowRight","ArrowUp","ArrowDown","Home","End","PageUp","PageDown"]);
-slider.addEventListener("keydown", event => {
-  if (gesture?.jig && gesture.kind === "pointer" && event.key.startsWith("Arrow")) {
+for (const button of [benchHold, jigHold]) {
+  button.addEventListener("pointerdown", event => {
+    if (event.button !== 0 || !event.isPrimary) return;
+    button.focus({preventScroll:true});
+    if (start(button, "pointer", event.pointerId)) {
+      try { button.setPointerCapture(event.pointerId); }
+      catch { release(); }
+    }
+  });
+  button.addEventListener("lostpointercapture", pointerEnd);
+  button.addEventListener("contextmenu", event => event.preventDefault());
+  button.addEventListener("blur", () => { if (gesture?.jig === (button === jigHold)) release(); });
+  button.addEventListener("keydown", event => {
+    if (event.key !== " " && event.key !== "Enter") return;
+    event.preventDefault();
+    if (!event.repeat) start(button, "key", event.key);
+  });
+}
+jigHold.addEventListener("keydown", event => {
+  if (gesture?.jig && event.key.startsWith("Arrow")) {
     event.preventDefault();
     const axis = angles[event.key === "ArrowLeft" || event.key === "ArrowRight" ? 0 : 1];
     if (event.key === "ArrowUp" || event.key === "ArrowRight") axis.stepUp();
     else axis.stepDown();
     axis.dispatchEvent(new Event("input", {bubbles:true}));
-    return;
   }
-  if (adjustKeys.has(event.key) && !event.repeat) start("key", event.key);
 });
 window.addEventListener("keyup", event => {
   if (gesture?.kind === "key" && gesture.key === event.key) release();
 }, true);
-slider.addEventListener("input", showLevel);
-slider.addEventListener("change", showLevel);
-slider.addEventListener("blur", release);
+for (const input of [benchSlider, jigSlider]) {
+  input.addEventListener("input", showLevels);
+  input.addEventListener("change", showLevels);
+}
 window.addEventListener("blur", () => { release(); endJig(); });
 window.addEventListener("pagehide", () => disconnect("Preview closed."));
 window.addEventListener("offline", () => disconnect("Network disconnected."));
@@ -350,7 +374,7 @@ async function watchStopState() {
 }
 watchStopState();
 el("video").addEventListener("error", () => { el("video-error").hidden = false; });
-showLevel();
+resetLevels();
 if (canControl) {
   connect();
 } else {

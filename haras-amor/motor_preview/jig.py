@@ -44,6 +44,7 @@ class NativeJig:
         self.arm_authorized = False
         self.arm_time = 0.0
         self.arm_message = ""
+        self.last_arm_report = None
         self.stop_pending = False
         self.verify_stop_after = 0.0
         self.last_disarm = -math.inf
@@ -59,6 +60,9 @@ class NativeJig:
         self.last_warning = ""
         self.warning_at = -math.inf
 
+    def record_arm(self, state, message):
+        self.last_arm_report = {"state": state, "message": message, "time": time.time()}
+
     def observe(self, msg, now):
         kind = msg.get_type()
         if kind == "HEARTBEAT":
@@ -66,6 +70,8 @@ class NativeJig:
             was_armed = self.armed
             self.armed = bool(msg.base_mode & mav.MAV_MODE_FLAG_SAFETY_ARMED)
             if self.armed and self.selected:
+                if self.arm_pending and self.arm_authorized:
+                    self.record_arm("armed", "PX4 confirmed the jig was armed.")
                 self.arm_pending = False
                 self.arm_message = ""
                 if not self.arm_authorized:
@@ -91,11 +97,19 @@ class NativeJig:
                     self.rejection = f"PX4 declined Stabilized mode (result {msg.result})."
                 if self.arm_pending and msg.command == mav.MAV_CMD_COMPONENT_ARM_DISARM:
                     self.arm_pending = self.arm_authorized = False
-                    self.arm_message = f"PX4 declined arming (result {msg.result}). Check its preflight messages."
+                    result = mav.enums["MAV_RESULT"].get(msg.result)
+                    reason = result.name.removeprefix("MAV_RESULT_").lower().replace("_", " ") if result else str(msg.result)
+                    self.arm_message = f"PX4 declined arming ({reason})."
+                    self.record_arm("declined", self.arm_message)
+                    if self.warning_at >= self.arm_time:
+                        self.last_arm_report["warning"] = self.last_warning
                 if self.stop_pending and msg.command == mav.MAV_CMD_COMPONENT_ARM_DISARM:
                     self.stop_message = "PX4 did not confirm disarm. Use the motor-power disconnect."
         elif kind == "STATUSTEXT" and msg.severity <= mav.MAV_SEVERITY_WARNING:
             self.last_warning, self.warning_at = msg.text, now
+            if (now - self.arm_time <= 3 and self.last_arm_report
+                    and self.last_arm_report["state"] == "declined"):
+                self.last_arm_report["warning"] = msg.text
         elif kind == "ATTITUDE_TARGET" and msg.time_boot_ms != self.fc_target_stamp:
             w, x, y, z = msg.q
             if (not msg.type_mask & mav.ATTITUDE_TARGET_TYPEMASK_ATTITUDE_IGNORE
@@ -121,7 +135,7 @@ class NativeJig:
         now = time.monotonic()
         self.link.check()
         if self.link.outputs_stopped or self.link.active or self.armed or self.stop_pending:
-            raise ValueError("Start with the FC disarmed, the slider released, and the motor stop reset.")
+            raise ValueError("Start with the FC disarmed, the bench button released, and the motor stop reset.")
         self.ground_and_attitude(now)
         params = self.link.leveling.parameters
         if params.get("COM_RC_IN_MODE") not in (1, 2, 3):
@@ -160,6 +174,8 @@ class NativeJig:
         self.target = (0, 0)
         self.throttle = 0
         self.stop_pending = self.armed or self.arm_pending
+        if self.arm_pending and self.last_arm_report and self.last_arm_report["state"] == "pending":
+            self.record_arm("unconfirmed", "The jig session ended before PX4 confirmed arming.")
         self.verify_stop_after = max(time.monotonic(), self.arm_time + 3 if self.arm_pending else 0)
         self.arm_pending = self.arm_authorized = False
         try:
@@ -226,7 +242,9 @@ class NativeJig:
             self.arm_authorized = True
             self._stick(0, 0, 0)
             self.link._send(mav.MAV_CMD_COMPONENT_ARM_DISARM, 1, 0, 0, 0, 0, 0, 0)
+            self.record_arm("pending", "Arm request sent. Waiting for PX4.")
         if self.arm_pending and now - self.arm_time > 3:
+            self.record_arm("unconfirmed", "PX4 did not confirm arming before the request timed out.")
             raise ValueError("Arming was not confirmed by PX4.")
         self._stick(x, y, throttle * 10)
         self.throttle = throttle

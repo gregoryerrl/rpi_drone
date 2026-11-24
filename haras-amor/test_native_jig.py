@@ -174,8 +174,15 @@ class JigTests(unittest.IsolatedAsyncioTestCase):
                 packet = await self.reply(packet)
         self.assertIn("declined arming", packet["notice"])
         self.assertFalse(packet["armed"])
+        refused = (await (await self.client.get("/api/leveling")).json())["last_arm_attempt"]
+        self.assertEqual(refused["state"], "declined")
+        self.assertIn("denied", refused["message"])
         self.assertIn("jig_off", await self.reply(packet, throttle=1))
         self.assertTrue(all(z == 0 for _,_,z in self.fc.sticks))
+        await self.ws.close()
+        self.assertEqual((await (await self.client.get("/api/leveling")).json())["last_arm_attempt"], refused)
+        remote = await self.client.get("/api/leveling", headers={"Host": "pi.local"})
+        self.assertNotIn("last_arm_attempt", await remote.json())
 
     async def test_browser_loss_while_armed_ends_jig(self):
         packet = await self.arm(await self.enable())
@@ -201,6 +208,18 @@ class JigTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Fresh FC attitude", packet["jig_off"])
         self.assertFalse(self.fc.armed)
 
+    async def test_ground_jig_ends_on_loss_of_ground_indication(self):
+        packet = await self.arm(await self.enable())
+        packet = await self.reply(packet, throttle=2)
+        self.fc.landed = mav.MAV_LANDED_STATE_IN_AIR
+        async with asyncio.timeout(1):
+            while "jig_poll" in packet:
+                packet = await self.reply(packet, throttle=2)
+        self.assertIn("ground", packet["jig_off"])
+        self.assertTrue((await self.ws.receive_json(timeout=1))["jig_disarmed"])
+        self.assertEqual(self.fc.sticks[-1], (0, 0, 0))
+        self.assertIn((mav.MAV_CMD_COMPONENT_ARM_DISARM, 0, 0, 0), self.fc.commands)
+
     async def test_level_at_start_and_measured_tilt_cutoff(self):
         packet = await self.enable()
         self.fc.attitude = (0, math.radians(8))
@@ -208,6 +227,8 @@ class JigTests(unittest.IsolatedAsyncioTestCase):
         result = await self.reply(packet, arm=True)
         self.assertIn("within 5°", result["jig_off"])
         self.assertFalse(self.fc.armed)
+        state = await (await self.client.get("/api/leveling")).json()
+        self.assertEqual(state["last_arm_attempt"]["state"], "blocked")
         self.fc.attitude = (0, 0)
         await asyncio.sleep(.08)
         packet = await self.arm(await self.enable())

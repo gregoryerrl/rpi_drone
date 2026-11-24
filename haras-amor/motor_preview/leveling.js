@@ -1,6 +1,7 @@
 "use strict";
 (() => {
   const status = document.getElementById("level-status");
+  const lastArm = document.getElementById("last-arm");
   const corners = document.getElementById("corners");
   const motorColumn = document.getElementById("motor-column");
   const previewBaseline = 45;
@@ -10,6 +11,13 @@
 
   function render(state) {
     if (status.textContent !== state.message) status.textContent = state.message;
+    if (state.last_arm_attempt) {
+      const attempt = state.last_arm_attempt;
+      const when = new Date(attempt.time * 1000).toLocaleString();
+      const message = ["Last arm attempt · " + when, attempt.message, attempt.warning].filter(Boolean).join(" ");
+      if (lastArm.textContent !== message) lastArm.textContent = message;
+      lastArm.hidden = false;
+    }
     const preview = state.jig?.confirmed && !state.jig.armed && !state.jig.arming;
     motorColumn.textContent = preview ? "Per-axis preview · " + previewBaseline + "% simulated baseline" : "Predicted lift increase";
     for (const [axis, cells] of rows) {
