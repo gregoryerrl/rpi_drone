@@ -1,9 +1,13 @@
 """Momentary collective motor tests on the disarmed Haras Amor flight controller."""
 import asyncio
+from collections import deque
+import struct
 import time
 
 from pymavlink.dialects.v20 import common as mav
 from serial import Serial
+
+from .leveling import GEOMETRY_PARAMS, LevelingPreview
 
 
 DEFAULT_DEVICE = "/dev/serial/by-id/usb-MicoAir_MicoAir743v2_0-if00"
@@ -16,6 +20,10 @@ HEARTBEAT_AGE = 1.6
 
 class BenchError(Exception):
     """A condition that ends the current operator session."""
+
+
+class MotorStopped(BenchError):
+    """This USB session can supply telemetry but cannot energize a motor."""
 
 
 class MotorLink:
@@ -33,6 +41,10 @@ class MotorLink:
             self.waiting = None
             self.command = None
             self.active = set()
+            self.outputs_stopped = False
+            self.leveling = LevelingPreview()
+            self.geometry_queue = deque()
+            self.next_geometry_read = float("inf")
             self.loop.add_reader(self.port.fileno(), self._read)
         except BaseException:
             self.port.close()
@@ -65,9 +77,39 @@ class MotorLink:
                       and not self.waiting.done() and msg.command == self.command
                       and msg.target_system in (0, 255) and msg.target_component in (0, 190)):
                     self.waiting.set_result(msg.result)
+                elif self.system is not None and msg.get_type() == "ATTITUDE":
+                    self.leveling.observe(msg.time_boot_ms, msg.roll, msg.pitch, msg.rollspeed,
+                                          msg.pitchspeed, time.monotonic())
+                elif self.system is not None and msg.get_type() == "PARAM_VALUE":
+                    self._geometry_value(msg)
+            self._read_missing_geometry(time.monotonic())
         except (OSError, mav.MAVError) as exc:
             self.loop.remove_reader(self.port.fileno())
             self._fail(f"Flight controller disconnected: {exc}")
+
+    def _geometry_value(self, msg):
+        name = msg.param_id
+        if name not in GEOMETRY_PARAMS:
+            return
+        if name == "CA_ROTOR_COUNT" and msg.param_type == mav.MAV_PARAM_TYPE_INT32:
+            # PX4 encodes this integer byte-for-byte in the MAVLink float field.
+            value, = struct.unpack("<i", struct.pack("<f", msg.param_value))
+        elif name != "CA_ROTOR_COUNT" and msg.param_type == mav.MAV_PARAM_TYPE_REAL32:
+            value = msg.param_value
+        else:
+            self.leveling.parameters.pop(name, None)
+            return
+        self.leveling.parameters[name] = value
+
+    def _read_missing_geometry(self, now):
+        if now < self.next_geometry_read or self.active or self.fault or self.system is None:
+            return
+        if not self.geometry_queue:
+            self.geometry_queue.extend(n for n in GEOMETRY_PARAMS if n not in self.leveling.parameters)
+        if self.geometry_queue:
+            name = self.geometry_queue.popleft()
+            self.wire.param_request_read_send(self.system, 1, name.encode("ascii"), -1)
+        self.next_geometry_read = now + (0.06 if self.geometry_queue else 4)
 
     def check(self):
         if self.fault:
@@ -76,6 +118,8 @@ class MotorLink:
             raise BenchError("Flight controller heartbeat lost.")
 
     def _send(self, command, *params):
+        if self.outputs_stopped and command == mav.MAV_CMD_ACTUATOR_TEST and params[:2] != (0, 0):
+            raise MotorStopped("Bench motor stop latched.")
         self.wire.command_long_send(self.system, 1, command, 0, *params)
 
     async def _confirmed(self, timeout, command, *params):
@@ -104,6 +148,7 @@ class MotorLink:
         self.wire.heartbeat_send(mav.MAV_TYPE_GCS, mav.MAV_AUTOPILOT_INVALID, 0, 0, 0)
         await self._confirmed(1.5, mav.MAV_CMD_REQUEST_MESSAGE,
                               mav.MAVLINK_MSG_ID_AUTOPILOT_VERSION, 0, 0, 0, 0, 0, 0)
+        self.next_geometry_read = time.monotonic()
 
     async def set_percent(self, percent):
         if type(percent) is not int or not 0 <= percent <= MAX_PERCENT:
@@ -112,21 +157,36 @@ class MotorLink:
         deadline = time.monotonic() + BATCH_SECONDS
         motors = MOTORS if percent else tuple(sorted(self.active))
         for motor in motors:
+            if percent and self.outputs_stopped:
+                raise MotorStopped("Bench motor stop latched.")
             self.active.add(motor)
             await self._confirmed(deadline - time.monotonic(), mav.MAV_CMD_ACTUATOR_TEST,
                                   percent / 100, PULSE_SECONDS if percent else 0, 0, 0, motor, 0, 0)
             if not percent:
-                self.active.remove(motor)
+                self.active.discard(motor)
+
+    def _release_active(self):
+        for motor in sorted(self.active):
+            try:
+                self._send(mav.MAV_CMD_ACTUATOR_TEST, 0, 0, 0, 0, motor, 0, 0)
+                self.active.discard(motor)
+            except OSError:
+                pass  # Every active PX4 test also has a finite expiry.
+
+    def stop_outputs(self):
+        # Never re-enable an old session: its browser replies or ACKs can be in
+        # flight. A reset opens a new session before accepting a new gesture.
+        self.outputs_stopped = True
+        if (self.command == mav.MAV_CMD_ACTUATOR_TEST and self.waiting is not None
+                and not self.waiting.done()):
+            self.waiting.set_exception(MotorStopped("Bench motor stop latched."))
+        self._release_active()
 
     def close(self):
         # On an error, release every potentially active motor before closing USB.
         # Each positive command also expires inside PX4 if the port or Pi disappears.
         self.loop.remove_reader(self.port.fileno())
         try:
-            for motor in sorted(self.active):
-                try:
-                    self._send(mav.MAV_CMD_ACTUATOR_TEST, 0, 0, 0, 0, motor, 0, 0)
-                except OSError:
-                    pass
+            self._release_active()
         finally:
             self.port.close()

@@ -13,7 +13,8 @@ import time
 
 from aiohttp import WSMsgType, web
 
-from .motors import BenchError, DEFAULT_DEVICE, MAX_PERCENT, MotorLink
+from .motors import BenchError, DEFAULT_DEVICE, MAX_PERCENT, MotorLink, MotorStopped
+from .stop import StopLatch, stop_marker
 
 
 HERE = Path(__file__).resolve().parent
@@ -25,6 +26,11 @@ def local_page(request):
     peer = request.remote
     return (peer is not None and ipaddress.ip_address(peer).is_loopback
             and re.fullmatch(r"(?:localhost|127\.0\.0\.1|\[::1\])(?::[0-9]{1,5})?", request.host) is not None)
+
+
+def require_operator_origin(request):
+    if not local_page(request) or request.headers.get("Origin") != "http://" + request.host:
+        raise web.HTTPForbidden(text="Open the operator preview through SSH.")
 
 
 async def message(ws, timeout):
@@ -47,12 +53,16 @@ async def message(ws, timeout):
 async def held_slider(ws, link, hold):
     while True:
         link.check()
+        if link.outputs_stopped:
+            return
         # A single outstanding challenge prevents buffered browser updates from
         # renewing output after an interruption. No fresh reply means no next pulse.
         ticket = secrets.token_hex(12)
         deadline = time.monotonic() + REPLY_TIMEOUT
         await ws.send_json({"hold": hold, "poll": ticket})
         reply = await message(ws, max(0, deadline - time.monotonic()))
+        if link.outputs_stopped:
+            return
         if reply == {"release": hold}:
             break
         if (reply is None or time.monotonic() >= deadline or reply.get("poll") != ticket
@@ -61,6 +71,8 @@ async def held_slider(ws, link, hold):
         await link.set_percent(reply.get("percent"))
         # Listen for release during the interval between refreshes.
         early = await message(ws, POLL_PAUSE)
+        if link.outputs_stopped:
+            return
         if early == {"release": hold}:
             break
         if early is not None:
@@ -71,18 +83,21 @@ async def held_slider(ws, link, hold):
 
 async def operate(ws, link):
     await link.ready()
-    await ws.send_json({"ready": True})
+    await ws.send_json({"stopped": True} if link.outputs_stopped else {"ready": True})
     last_hold = 0
     while True:
         link.check()
         data = await message(ws, 0.4)
-        if data is None:
+        if data is None or link.outputs_stopped:
             continue
         hold = data.get("hold")
         if set(data) != {"hold"} or type(hold) is not int or hold <= last_hold:
             raise BenchError("Expected a new slider press.")
         last_hold = hold
-        await held_slider(ws, link, hold)
+        try:
+            await held_slider(ws, link, hold)
+        except MotorStopped:
+            pass  # Discard this hold; the inhibited session can still provide telemetry.
 
 
 def next_frame(output, sequence):
@@ -93,13 +108,16 @@ def next_frame(output, sequence):
 
 
 class Preview:
-    def __init__(self, camera, open_link):
+    def __init__(self, camera, open_link, marker):
         self.camera = camera
         self.open_link = open_link
         self.operator = None
+        self.operator_link = None
+        self.latch = StopLatch(marker)
         self.page = (HERE / "index.html").read_text().replace("__MAX__", str(MAX_PERCENT))
         self.page = self.page.replace("__USER__", html.escape(getpass.getuser(), quote=True))
         self.script = (HERE / "controls.js").read_bytes()
+        self.leveling_script = (HERE / "leveling.js").read_bytes()
 
     async def index(self, request):
         page = self.page.replace("__LOCAL__", "yes" if local_page(request) else "no")
@@ -107,6 +125,64 @@ class Preview:
 
     async def javascript(self, request):
         return web.Response(body=self.script, content_type="application/javascript")
+
+    async def leveling_javascript(self, request):
+        return web.Response(body=self.leveling_script, content_type="application/javascript")
+
+    async def leveling_state(self, request):
+        link = self.operator_link
+        if link is None:
+            return web.json_response({"message": "Open the SSH operator preview to receive FC telemetry."})
+        try:
+            link.check()
+        except BenchError as exc:
+            return web.json_response({"message": str(exc)})
+        return web.json_response(link.leveling.snapshot(time.monotonic()))
+
+    async def stop_status(self, request):
+        state = {"stopped": self.latch.stopped, "storage_error": self.latch.storage_error}
+        if self.latch.stopped and local_page(request):
+            state["token"] = self.latch.token
+        return web.json_response(state)
+
+    async def stop_motors(self, request):
+        require_operator_origin(request)
+        self.latch.engage()
+        try:
+            if self.operator_link is not None:
+                self.operator_link.stop_outputs()
+        finally:
+            self.latch.persist()
+        operator = self.operator
+        if operator is not None and not operator.closed:
+            try:
+                await asyncio.wait_for(operator.send_json({"stopped": True}), 0.2)
+            except (OSError, RuntimeError, TimeoutError):
+                pass  # Output is already inhibited, including on the old socket.
+        return await self.stop_status(request)
+
+    async def reset_stop(self, request):
+        require_operator_origin(request)
+        if request.content_type != "application/json":
+            raise web.HTTPUnsupportedMediaType()
+        try:
+            data = await request.json()
+        except (ValueError, UnicodeError) as exc:
+            raise web.HTTPBadRequest() from exc
+        try:
+            reset = isinstance(data, dict) and self.latch.reset(data.get("token"))
+        except OSError as exc:
+            raise web.HTTPServiceUnavailable(text="Could not clear the stored motor stop.") from exc
+        if not reset:
+            raise web.HTTPConflict(text="This reset does not match the current stop.")
+        # Old holds and buffered replies must never resume after reset.
+        operator = self.operator
+        if operator is not None:
+            try:
+                await asyncio.wait_for(operator.close(code=1001, message=b"Motor stop reset"), 0.6)
+            except (OSError, TimeoutError):
+                pass
+        return await self.stop_status(request)
 
     async def stream(self, request):
         try:
@@ -131,8 +207,7 @@ class Preview:
         return response
 
     async def motors(self, request):
-        if not local_page(request) or request.headers.get("Origin") != "http://" + request.host:
-            raise web.HTTPForbidden(text="Open the operator preview through SSH.")
+        require_operator_origin(request)
         ws = web.WebSocketResponse(max_msg_size=512, compress=False)
         await ws.prepare(request)
         if self.operator is not None:
@@ -144,6 +219,9 @@ class Preview:
         error = None
         try:
             link = self.open_link()
+            self.operator_link = link
+            if self.latch.stopped:
+                link.stop_outputs()
             await operate(ws, link)
         except ConnectionError:
             pass
@@ -154,6 +232,7 @@ class Preview:
                 if link is not None:
                     link.close()
             finally:
+                self.operator_link = None
                 self.operator = None
         if error and not ws.closed:
             await ws.send_json({"error": error})
@@ -178,12 +257,17 @@ async def headers(request, response):
     })
 
 
-def make_app(camera, open_link):
-    preview = Preview(camera, open_link)
+def make_app(camera, open_link, marker=None):
+    preview = Preview(camera, open_link, marker)
     app = web.Application()
     for route in ("/", "/index.html", "/live"):
         app.router.add_get(route, preview.index)
     app.router.add_get("/controls.js", preview.javascript)
+    app.router.add_get("/leveling.js", preview.leveling_javascript)
+    app.router.add_get("/api/leveling", preview.leveling_state)
+    app.router.add_get("/api/motor-stop", preview.stop_status)
+    app.router.add_post("/api/motor-stop", preview.stop_motors)
+    app.router.add_post("/api/motor-stop/reset", preview.reset_stop)
     app.router.add_get("/stream.mjpg", preview.stream, allow_head=False)
     app.router.add_get("/motors", preview.motors, allow_head=False)
     app.on_response_prepare.append(headers)
@@ -199,7 +283,7 @@ def main():
     args = parser.parse_args()
     # Reuse the same on-demand MJPEG encoder as the standalone camera preview.
     camera_project = import_module("research.cv-research.pan-tilt-face-tracking.cam_server")
-    app = make_app(camera_project.CameraPreview(), lambda: MotorLink(args.device))
+    app = make_app(camera_project.CameraPreview(), lambda: MotorLink(args.device), stop_marker())
     web.run_app(app, host=args.bind, port=args.port, access_log=None)
 
 

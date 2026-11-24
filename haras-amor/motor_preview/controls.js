@@ -4,6 +4,8 @@ const slider = el("throttle"), statusLine = el("status"), reconnect = el("reconn
 const canControl = document.documentElement.dataset.operator === "yes";
 const idleText = "PX4 disarmed. Hold and drag the slider. Release to stop.";
 let socket = null, ready = false, gesture = null, sequence = 0, pollTimer = null;
+const stopButton = el("motor-stop"), resetButton = el("reset-stop"), stopStatus = el("stop-status");
+let latched = null, stopToken = null, actionId = 0, changingStop = false, needStopConfirmation = false;
 
 function showLevel() {
   if (!gesture) slider.value = "0";
@@ -16,7 +18,7 @@ function release() {
   clearTimeout(pollTimer);
   showLevel();
   if (old && socket?.readyState === WebSocket.OPEN) {
-    socket.send(JSON.stringify({release: old.id}));
+    try { socket.send(JSON.stringify({release: old.id})); } catch {}
     statusLine.textContent = "Releasing motors…";
   }
 }
@@ -30,6 +32,71 @@ function disconnect(reason) {
   if (old) old.close();
   statusLine.textContent = reason;
   reconnect.hidden = !canControl;
+}
+
+function applyStopState(state) {
+  if (needStopConfirmation && !state.stopped) return;
+  if (state.stopped) {
+    needStopConfirmation = false;
+    release();
+  }
+  latched = state.stopped;
+  stopToken = state.token || null;
+  slider.disabled = !ready || latched;
+  resetButton.hidden = !canControl || !latched || !stopToken;
+  const note = state.storage_error ? "Motor stop latched in memory. Could not verify it on disk." :
+      latched ? "Bench motor stop latched." : "";
+  if (stopStatus.textContent !== note) stopStatus.textContent = note;
+}
+
+async function refreshStopState() {
+  if (changingStop) return;
+  const id = actionId;
+  try {
+    const r = await fetch("/api/motor-stop", {cache:"no-store", signal:AbortSignal.timeout(1200)});
+    if (r.ok) {
+      const state = await r.json();
+      if (id === actionId && !changingStop) applyStopState(state);
+    }
+  } catch {}  // The next poll retries. The stop button also works without a WebSocket.
+}
+
+async function changeStop(reset) {
+  if (!canControl || (reset && (!stopToken || changingStop))) return;
+  const token = stopToken, id = ++actionId;
+  changingStop = true;
+  latched = true;
+  if (!reset) needStopConfirmation = true;
+  slider.disabled = true;
+  resetButton.hidden = true;
+  release();
+  stopStatus.textContent = reset ? "Resetting motor stop…" : "Sending motor stop…";
+  try {
+    const options = {method:"POST", cache:"no-store", signal:AbortSignal.timeout(2000)};
+    if (reset) {
+      options.headers = {"Content-Type":"application/json"};
+      options.body = JSON.stringify({token});
+    }
+    const r = await fetch(reset ? "/api/motor-stop/reset" : "/api/motor-stop", options);
+    if (!r.ok) throw new Error("Stop state unavailable");
+    const state = await r.json();
+    if (id !== actionId) return;
+    applyStopState(state);
+    if (reset && !state.stopped) {
+      disconnect("Motor stop reset.");
+      connect();  // A new connection starts at zero and needs a new physical press.
+    }
+  } catch {
+    if (id !== actionId) return;
+    disconnect(reset ? "Reset unconfirmed." : "Motor control disconnected.");
+    stopStatus.textContent = reset ? "Reset unconfirmed. Check the stop state." :
+        "Stop unconfirmed. Use the independent kill switch or motor-power cutoff.";
+  } finally {
+    if (id === actionId) {
+      changingStop = false;
+      refreshStopState();
+    }
+  }
 }
 
 function expectPoll() {
@@ -48,9 +115,15 @@ function connect() {
     const msg = JSON.parse(event.data);
     if (msg.error) {
       disconnect(msg.error);
+    } else if (msg.stopped) {
+      ready = false;
+      if (!changingStop) ++actionId;
+      applyStopState({stopped:true, token:stopToken});
+      statusLine.textContent = "Motor output blocked. Sensor preview available.";
+      refreshStopState();
     } else if (msg.ready) {
       ready = true;
-      slider.disabled = false;
+      slider.disabled = latched !== false;
       statusLine.textContent = idleText;
     } else if (msg.poll && msg.hold === gesture?.id) {
       if (document.hidden || !document.hasFocus()) { release(); return; }
@@ -69,7 +142,7 @@ function connect() {
 }
 
 function start(kind, key) {
-  if (!ready || gesture || document.hidden || socket?.readyState !== WebSocket.OPEN) return false;
+  if (!ready || latched !== false || gesture || document.hidden || socket?.readyState !== WebSocket.OPEN) return false;
   gesture = {id: ++sequence, kind, key};
   expectPoll();
   socket.send(JSON.stringify({hold: gesture.id}));
@@ -107,6 +180,20 @@ document.addEventListener("visibilitychange", () => {
   if (document.hidden && canControl) disconnect("Controller paused while the page was hidden.");
 });
 reconnect.addEventListener("click", connect);
+stopButton.hidden = !canControl;
+stopButton.addEventListener("click", () => changeStop(false));
+resetButton.addEventListener("click", () => changeStop(true));
+window.addEventListener("keydown", event => {
+  if (canControl && event.key === "Escape" && !event.repeat) {
+    event.preventDefault();
+    changeStop(false);
+  }
+}, true);
+async function watchStopState() {
+  if (!document.hidden) await refreshStopState();
+  window.setTimeout(watchStopState, 1000);
+}
+watchStopState();
 el("video").addEventListener("error", () => { el("video-error").hidden = false; });
 showLevel();
 if (canControl) {

@@ -50,6 +50,26 @@ ssh -N -L 127.0.0.1:8080:127.0.0.1:8000 <pi-user>@<pi-address>
 
 The controller requires a disarmed PX4 quadrotor. It uses the MicoAir USB device by ID. Pass `--device` for another serial path. The read-only camera view works independently of the flight controller.
 
+In the SSH operator preview, click **Stop motors** or press **Esc** to end a bench motor test. The Pi blocks further output immediately and sends a release for each motor it commanded, including when it is still waiting for the FC to acknowledge one. The button also works from a second operator tab when the first tab owns the slider. The camera and leveling telemetry stay available. [MAVLink actuator test and release](https://mavlink.io/en/messages/common.html#MAV_CMD_ACTUATOR_TEST)
+
+The stop stays latched across page reloads and service restarts. Click **Reset motor stop** to allow a fresh slider press. Reset starts at zero. The on-screen confirmation means the Pi has blocked its own bench commands. If the browser cannot confirm the stop, or if the aircraft is under independent FC or radio control, use the independent kill switch or motor-power disconnect.
+
+### Jig leveling preview
+
+Open the operator preview through SSH and leave the slider at zero. The **Jig leveling preview** panel shows roll, pitch, angular rates, and the proposed leveling correction for each axis. You can try it with motor power disconnected and the FC powered over USB. On a level reference, both angle readings should be near zero. Tilting the jig on a free axis shows the predicted response. Only the manual slider sends motor commands.
+
+The model aims for 0° roll and pitch relative to gravity. It takes the fused attitude and body rates from the same MAVLink `ATTITUDE` sample. It uses the shortest rotation toward upright and subtracts a damping term proportional to angular rate. This lets the correction reverse to brake an axis already returning quickly to level. The ideal model has a natural frequency of 1/s, critical damping, and a combined angular-acceleration bound of 15°/s². These are preview-model settings. It makes no estimate of motor power. [Leveling algorithm](motor_preview/leveling.py) · [MAVLink attitude fields](https://mavlink.io/en/messages/common.html#ATTITUDE)
+
+For each connection, the preview reads the rotor count, positions and thrust axes from PX4. On Haras Amor, airframe 4001 reported the following logical motor positions as viewed from above with the nose forward. Physical wiring needs a separate identification check. [PX4 motor geometry](https://docs.px4.io/main/en/config/actuators#motor-geometry-multicopter)
+
+| M1 | M2 | M3 | M4 |
+| --- | --- | --- | --- |
+| Front-right | Rear-left | Front-left | Rear-right |
+
+At rest, a right-side drop calls for more lift on M1 and M4. A nose drop calls for more lift on M1 and M3. The panel shows each axis independently and suppresses motor hints smaller than 0.5°/s². It clears corrections when samples stop advancing for 350 ms, contain invalid values, or the frame leaves the upright hemisphere. Incomplete or unsupported rotor geometry hides the motor numbers.
+
+The read-only JSON feed is at `/api/leveling`. Both views share the operator tab’s USB connection. The regression tests include a simulated jig recovering from an angular disturbance and a simulated FC with a different motor order.
+
 ### Other experiments
 
 - **RC input monitor.** See which channels change as you move a stick or flip a switch. Run these commands from `haras-amor/` and open `http://<pi-address>:8002/` from the same network. If the Pi has several addresses, use its Wi-Fi or hotspot address for `pi_addr`. Set `--device` to match the controller’s serial port. [RC monitor source](rc_monitor/server.py)
