@@ -1,5 +1,5 @@
-/faces/
-/venv/
+faces/
+venv
 __pycache__/
 *.py[cod]
 *.bak

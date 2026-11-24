@@ -1,3 +1,0 @@
-# Python wheels layered on Raspberry Pi OS's camera and OpenCV packages.
-pymavlink==2.4.50
-pyserial==3.5

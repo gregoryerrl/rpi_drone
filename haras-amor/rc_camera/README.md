@@ -1,14 +1,14 @@
 # RC pan-tilt object tracking
 
-Use the TX16S to aim the stand, then lock onto the visual detail under the center crosshair. The MicoAir flight controller supplies read-only RC inputs. The PCA9685 on the Pi drives the two camera servos. The camera continues processing and accepting radio input when the preview is closed.
+Use the TX16S to aim the stand, then lock onto the visual detail under the center crosshair. The MicoAir flight controller supplies read-only RC inputs. On the CV research stand, a PCA9685 drives the two camera servos. The camera continues processing and accepting radio input when the preview is closed.
 
 | Radio input | Camera control |
 | --- | --- |
 | Right stick horizontal, CH1 | Pan. More deflection moves the camera faster. |
 | Right stick vertical, CH2 | Tilt. A higher pulse points the camera up on the tested mount. |
-| SG middle, about 1500 µs | Follow off. Aim manually and release the stick to hold position. |
-| SG high, about 2000 µs | Select the object at the crosshair once and start following. |
-| SG low, about 1000 µs | Follow off, with manual steering available. |
+| SG middle, CH8 about 1500 µs | Follow off. Aim manually and release the stick to hold position. |
+| SG high, CH8 about 2000 µs | Select the object at the crosshair once and start following. |
+| SG low, CH8 about 1000 µs | Follow off, with manual steering available. |
 
 The manual stick holds the current pose within 30 µs of center. Beyond that, the speed increases gradually for small corrections and more steeply toward full stick. On a single axis, quarter, half, and full travel beyond the deadband command about 84, 315, and 1,800 µs/s on the tested stand. Full speed is reached at 1,050 or 1,950 µs. Releasing the stick holds the new aim.
 
@@ -16,11 +16,10 @@ Open `http://<pi-address>:8001/live` to see the crosshair, channel values and co
 
 ## Run
 
-From the root of this repository on Raspberry Pi OS, initialize the pinned camera research code and set up the system-site-packages virtual environment described in the main README.
+Complete the project setup first. Run all commands below from `rpi_drone/haras-amor/` on the Pi. [Haras Amor setup](../README.md#setup-on-the-pi)
 
 ```sh
-git submodule update --init --recursive
-sudo apt install python3-picamera2 python3-opencv python3-flask python3-smbus2
+sudo apt install python3-picamera2
 venv/bin/python -m rc_camera.server --bind "$(hostname -I | awk '{print $1}')" --device /dev/ttyACM0
 ```
 
