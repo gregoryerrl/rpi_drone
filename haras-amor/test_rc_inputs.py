@@ -1,3 +1,4 @@
+import math
 import unittest
 
 from pymavlink.dialects.v20 import ardupilotmega as mav
@@ -13,6 +14,38 @@ def channels(*values):
 
 
 class RcInputTests(unittest.TestCase):
+    def test_fc_arm_state_and_attitude_have_independent_freshness_from_receiver(self):
+        inputs = Inputs()
+        sender = mav.MAVLink(None, srcSystem=1, srcComponent=mav.MAV_COMP_ID_AUTOPILOT1)
+        def observe(message, now):
+            inputs.update(mav.MAVLink(None).parse_char(message.pack(sender)), now)
+        def heartbeat(armed, now):
+            flags = mav.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED | mav.MAV_MODE_FLAG_AUTO_ENABLED
+            flags |= mav.MAV_MODE_FLAG_STABILIZE_ENABLED | mav.MAV_MODE_FLAG_GUIDED_ENABLED
+            if armed:
+                flags |= mav.MAV_MODE_FLAG_SAFETY_ARMED
+            observe(sender.heartbeat_encode(mav.MAV_TYPE_QUADROTOR, mav.MAV_AUTOPILOT_PX4, flags,
+                                            (4 << 16) | (3 << 24), 3), now)
+        self.assertIsNone(inputs.snapshot(0)["fc_armed"])
+        heartbeat(False, 0)
+        self.assertIs(inputs.snapshot(0)["fc_armed"], False)
+        self.assertEqual(inputs.snapshot(0)["fc_mode"], "Hold")
+        attitude = sender.attitude_encode(20, math.radians(2), math.radians(-3), 0, 0, 0, 0)
+        observe(attitude, .1)
+        self.assertEqual(inputs.snapshot(.2)["attitude_deg"], {"roll": 2, "pitch": -3})
+        heartbeat(True, .3)
+        flag = mav.MAV_SYS_STATUS_SENSOR_RC_RECEIVER
+        observe(sender.sys_status_encode(flag, flag, 0, *([0]*10)), .4)
+        self.assertIs(inputs.snapshot(.4)["fc_armed"], True)
+        self.assertEqual(inputs.snapshot(.4)["status"], "Receiver signal lost")
+        observe(attitude, .8)
+        self.assertIsNone(inputs.snapshot(.8)["attitude_deg"])
+        self.assertIsNone(inputs.snapshot(2)["fc_armed"])
+        self.assertIsNone(inputs.snapshot(2)["fc_mode"])
+        heartbeat(True, 3)
+        inputs.reset("Waiting for flight controller")
+        self.assertIsNone(inputs.snapshot(3)["fc_armed"])
+
     def test_jitter_is_quiet_and_slow_diagonal_stick_motion_is_visible(self):
         inputs = Inputs()
         inputs.update(channels(1500, 1500), 0)

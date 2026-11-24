@@ -15,6 +15,7 @@
   #status {font-size:.9rem;color:#655936}
   #status::before {content:"";display:inline-block;width:8px;height:8px;margin-right:8px;border-radius:50%;background:currentColor}
   #status.connected {color:#176849}
+  #fc-telemetry {margin:-10px 0 16px;font-variant-numeric:tabular-nums}
   .last {background:#182e25;color:#f3fcf6;border-radius:12px;padding:20px clamp(16px,4vw,32px);min-height:129px}
   .last h2 {font-size:.89rem;color:#bed7c9;font-weight:550}
   #last {font-size:clamp(1.5rem,4.5vw,2.6rem);line-height:1.15;letter-spacing:-.04em;margin:8px 0}
@@ -46,6 +47,7 @@
 </style>
 <main>
   <header><h1>RC input monitor</h1><span id="status" role="status">Connecting…</span></header>
+  <p id="fc-telemetry">Waiting for flight controller telemetry.</p>
   <section class="last" aria-labelledby="last-label">
     <h2 id="last-label">Last moved</h2>
     <p id="last">Waiting for receiver</p>
@@ -186,6 +188,13 @@
     return card;
   }
   function render(next) {
+    const armed = typeof next.fc_armed === 'boolean' ? (next.fc_armed ? 'Armed' : 'Disarmed') : 'Awaiting heartbeat';
+    const fields = ['Flight controller · ' + armed];
+    if (next.fc_mode) fields.push(next.fc_mode);
+    if (next.attitude_deg) {
+      fields.push('Roll ' + next.attitude_deg.roll.toFixed(1) + '°', 'Pitch ' + next.attitude_deg.pitch.toFixed(1) + '°');
+    }
+    byId('fc-telemetry').textContent = fields.join(' · ');
     state = next;
     if (next.source && source !== next.source) {
       source = next.source;

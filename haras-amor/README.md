@@ -80,7 +80,7 @@ The read-only JSON feed is at `/api/leveling`. Both views share the operator tab
 
 ### Other experiments
 
-- **RC input monitor.** See which channels change as you move a stick or flip a switch. Run these commands from `haras-amor/` and open `http://<pi-address>:8002/` from the same network. If the Pi has several addresses, use its Wi-Fi or hotspot address for `pi_addr`. Set `--device` to match the controller’s serial port. [RC monitor source](rc_monitor/server.py)
+- **RC input monitor.** The monitor opens the FC USB port read-only. It shows the current armed state and flight mode from the FC heartbeat, measured roll and pitch, and changes to the receiver channels. For a radio-controlled session, close the browser motor controller. The standalone camera preview and RC monitor can run together. Run these commands from `haras-amor/` and open `http://<pi-address>:8002/` from the same network. If the Pi has several addresses, use its Wi-Fi or hotspot address for `pi_addr`. Set `--device` to match the controller’s serial port. [RC monitor source](rc_monitor/server.py)
 
   ```sh
   pi_addr=$(hostname -I | awk '{print $1}')

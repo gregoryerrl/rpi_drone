@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import fcntl
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import math
 import os
 from pathlib import Path
 import select
@@ -15,6 +16,7 @@ import threading
 import time
 import tty
 
+from pymavlink import mavutil
 from pymavlink.dialects.v20 import ardupilotmega as mav
 
 MOVE_US = 25
@@ -35,6 +37,16 @@ class Inputs:
         self.reset("Waiting for receiver")
 
     def reset(self, status):
+        self.system = None
+        self.armed = None
+        self.mode = None
+        self.heartbeat_at = None
+        self.attitude = None
+        self.attitude_stamp = None
+        self.attitude_at = None
+        self.reset_channels(status)
+
+    def reset_channels(self, status):
         self.status = status
         self.channels = {}
         self.latest = []
@@ -44,12 +56,30 @@ class Inputs:
     def update(self, message, now):
         if message.get_srcComponent() != mav.MAV_COMP_ID_AUTOPILOT1:
             return
+        if self.system is not None and message.get_srcSystem() != self.system:
+            return
         kind = message.get_type()
+        if kind == "HEARTBEAT" and message.autopilot != mav.MAV_AUTOPILOT_INVALID:
+            self.system = message.get_srcSystem()
+            self.armed = bool(message.base_mode & mav.MAV_MODE_FLAG_SAFETY_ARMED)
+            mode = mavutil.mode_string_v10(message)
+            self.mode = "Hold" if message.autopilot == mav.MAV_AUTOPILOT_PX4 and mode == "LOITER" else mode
+            self.heartbeat_at = now
+            return
+        if kind == "ATTITUDE" and self.system is not None:
+            if message.time_boot_ms != self.attitude_stamp:
+                self.attitude_stamp = message.time_boot_ms
+                self.attitude_at = now
+                self.attitude = None
+                if math.isfinite(message.roll) and math.isfinite(message.pitch):
+                    self.attitude = {"roll": round(math.degrees(message.roll), 1),
+                                     "pitch": round(math.degrees(message.pitch), 1)}
+            return
         if kind == "SYS_STATUS":
             flag = mav.MAV_SYS_STATUS_SENSOR_RC_RECEIVER
             monitored = message.onboard_control_sensors_present & message.onboard_control_sensors_enabled
             if monitored & flag and not message.onboard_control_sensors_health & flag:
-                self.reset("Receiver signal lost")
+                self.reset_channels("Receiver signal lost")
                 self.unhealthy_at = now
             else:
                 self.unhealthy_at = None
@@ -57,7 +87,7 @@ class Inputs:
         if kind != "RC_CHANNELS" or (self.unhealthy_at is not None and now - self.unhealthy_at < 3):
             return
         if self.last_packet is not None and now - self.last_packet > STALE_S:
-            self.reset("Waiting for receiver")
+            self.reset_channels("Waiting for receiver")
         self.last_packet = now
         channels = {}
         changes = []
@@ -80,9 +110,14 @@ class Inputs:
 
     def snapshot(self, now):
         if self.last_packet is not None and now - self.last_packet > STALE_S:
-            self.reset("RC data stopped")
+            self.reset_channels("RC data stopped")
+        heartbeat_fresh = self.heartbeat_at is not None and 0 <= now - self.heartbeat_at <= STALE_S
+        attitude_fresh = self.attitude_at is not None and 0 <= now - self.attitude_at <= .5
         return {
             "status": self.status,
+            "fc_armed": self.armed if heartbeat_fresh else None,
+            "fc_mode": self.mode if heartbeat_fresh else None,
+            "attitude_deg": self.attitude if heartbeat_fresh and attitude_fresh else None,
             "received_at": self.last_packet,  # Pi monotonic clock, stamped when the FC packet arrived
             "channels": [
                 {"number": n, "value": ch.value,
