@@ -102,16 +102,24 @@ class JigTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_disarmed_native_mode_accepts_targets_then_restores(self):
         packet = await self.enable()
+        self.assertFalse(packet["armed"])
+        self.assertEqual(packet["stick_pct"], 0)
         for roll, pitch in ((3, -4), (-5, 0), (0, 5), (0, 0)):
             async with asyncio.timeout(1):
                 while True:
                     packet = await self.reply(packet, roll, pitch)
                     if packet["fc_target"] and all(abs(a-b) < .1 for a,b in zip(packet["fc_target"], (roll,pitch))):
                         break
+            state = await (await self.client.get("/api/leveling")).json()
+            self.assertEqual(state["jig"]["target"], [roll, pitch])
+            self.assertEqual(state["jig"]["fc_target"], packet["fc_target"])
+            self.assertFalse(state["jig"]["armed"])
+            self.assertEqual(state["jig"]["stick_pct"], 0)
         await self.ws.send_json({"jig": "off"})
         self.assertIn("jig_off", await self.ws.receive_json(timeout=1))
         await asyncio.sleep(.05)
         self.assertEqual(self.fc.mode, (4, 3))
+        self.assertNotIn("jig", await (await self.client.get("/api/leveling")).json())
         self.assertTrue(all(z == 0 for _, _, z in self.fc.sticks))
         self.assertTrue(all(c not in (mav.MAV_CMD_ACTUATOR_TEST, mav.MAV_CMD_COMPONENT_ARM_DISARM)
                             for c, *_ in self.fc.commands))
@@ -127,7 +135,10 @@ class JigTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_operator_stop_overrides_active_jig_and_verifies_disarm(self):
         packet = await self.arm(await self.enable())
+        self.assertTrue(packet["armed"])
+        self.assertEqual(packet["stick_pct"], 0)
         packet = await self.reply(packet, roll=2, throttle=7)
+        self.assertEqual(packet["stick_pct"], 7)
         self.assertEqual(self.fc.sticks[-1][2], 70)
         stop = await self.client.post("/api/motor-stop", headers={"Origin": self.origin})
         self.assertTrue((await stop.json())["stopped"])

@@ -2,11 +2,16 @@
 (() => {
   const status = document.getElementById("level-status");
   const corners = document.getElementById("corners");
+  const motorColumn = document.getElementById("motor-column");
+  const previewBaseline = 45;
   const rows = ["roll", "pitch"].map(axis => [axis, document.getElementById("level-" + axis).cells]);
   const signed = value => (value > 0 ? "+" : "") + value.toFixed(1);
+  const motorNames = ids => ids.map(n => "M" + n).join(", ");
 
   function render(state) {
     if (status.textContent !== state.message) status.textContent = state.message;
+    const preview = state.jig?.confirmed && !state.jig.armed && !state.jig.arming;
+    motorColumn.textContent = preview ? "Per-axis preview · " + previewBaseline + "% simulated baseline" : "Predicted lift increase";
     for (const [axis, cells] of rows) {
       const data = state.axes?.[axis];
       if (!data) {
@@ -16,8 +21,16 @@
       cells[1].textContent = signed(data.angle_deg) + "°";
       cells[2].textContent = signed(data.rate_deg_s) + "°/s";
       cells[3].textContent = signed(data.correction_deg_s2) + "°/s²";
-      cells[4].textContent = data.more_lift === null ? "Unknown" :
-          data.more_lift.map(n => "M" + n).join(", ") || "Even";
+      if (data.more_lift === null) {
+        cells[4].textContent = "Waiting for rotor geometry";
+      } else if (preview && data.more_lift.length) {
+        const lower = state.corners.map((_, i) => i + 1).filter(n => !data.more_lift.includes(n));
+        cells[4].textContent = motorNames(data.more_lift) + " ↑ · " + motorNames(lower) + " ↓";
+      } else if (preview) {
+        cells[4].textContent = "All at " + previewBaseline + "%";
+      } else {
+        cells[4].textContent = motorNames(data.more_lift) || "Even";
+      }
     }
     corners.textContent = (state.corners || []).map((name, i) => "M" + (i + 1) + " " + name).join(" · ");
   }

@@ -239,5 +239,5 @@ class NativeJig:
         if notice and self.warning_at >= self.arm_time - 1 and now - self.warning_at < 8:
             notice += " " + self.last_warning
         return {"confirmed": self.confirmed, "armed": self.armed, "arming": self.arm_pending,
-                "notice": notice,
+                "stick_pct": self.throttle, "target": list(self.target), "notice": notice,
                 "fc_target": self.fc_target if self.confirmed and now - self.fc_target_at < .7 else None}

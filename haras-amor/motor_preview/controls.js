@@ -11,10 +11,20 @@ const angles = [el("target-roll"), el("target-pitch")];
 let jig = false, jigReady = false, jigArmed = false, jigArming = false, endingJig = false;
 let armRequest = false, confirmArmAt = 0;
 let fcLevelTarget = false;
+let jigStickPercent = 0;
 let jigTimer = null;
 
 function setText(element, value) {
   if (element.textContent !== value) element.textContent = value;
+}
+
+function jigStateLabel() {
+  if (endingJig) return "Stopping…";
+  if (!jig) return "Off";
+  if (!jigReady) return "Selecting…";
+  if (jigArming) return "Arming…";
+  if (!jigArmed) return "Standby";
+  return "Armed · " + jigStickPercent + "% stick";
 }
 
 function controls() {
@@ -22,7 +32,7 @@ function controls() {
   slider.disabled = !enabled || (jig && (!jigReady || !jigArmed || endingJig));
   jigSwitch.disabled = !enabled || endingJig || (!jig && !!gesture);
   jigSwitch.setAttribute("aria-checked", String(jig && jigReady && !endingJig));
-  setText(jigSwitch, "Auto stabilize · " + (endingJig ? "Stopping…" : jigReady ? "On" : jig ? "Starting…" : "Off"));
+  setText(jigSwitch, "Auto stabilize · " + jigStateLabel());
   for (const input of angles) input.disabled = !enabled || !jigReady || endingJig || jigArming;
   el("target-level").disabled = angles[0].disabled;
   armButton.hidden = !enabled || !jigReady || jigArmed || endingJig;
@@ -57,6 +67,7 @@ function clearJig() {
   clearTimeout(jigTimer);
   jig = jigReady = jigArmed = jigArming = endingJig = armRequest = false;
   fcLevelTarget = false;
+  jigStickPercent = 0;
   confirmArmAt = 0;
   armButton.textContent = "Arm secured jig…";
   el("fc-target").textContent = "";
@@ -234,12 +245,22 @@ function connect() {
       jigReady = msg.confirmed;
       jigArmed = msg.armed;
       jigArming = msg.arming;
+      jigStickPercent = msg.stick_pct;
       fcLevelTarget = !!msg.fc_target && msg.fc_target.every(a => Math.abs(a) <= .4);
-      setText(el("jig-status"), msg.notice || (jigArmed ? "PX4 armed on jig. The throttle stick controls power." :
-          jigReady ? "PX4 Stabilized selected · disarmed. Move the targets to check the FC response." :
-          "Selecting PX4 Stabilized with zero throttle…"));
-      setText(statusLine, jigArmed ? "Releasing the throttle ends the run and requests disarm." :
-          "Jig throttle stays at zero until PX4 confirms the jig is armed.");
+      let detail = "Selecting PX4 Stabilized with zero throttle…";
+      if (jigArming) detail = "Waiting for PX4 to confirm or decline arming.";
+      else if (jigArmed) detail = jigStickPercent === 0 ?
+          "PX4 reports armed. The Pi is sending zero throttle. Motors may idle." :
+          "PX4 reports armed. The percentage shows the throttle stick command. Motor speed is unmeasured.";
+      else if (jigReady) detail = "PX4 is disarmed at 0% throttle. The sliders set angle targets. The motors cannot move the jig or resist a tilt.";
+      setText(el("jig-status"), [detail, msg.notice].filter(Boolean).join(" "));
+      let powerStatus = "Jig throttle is at zero.";
+      if (jigArmed) powerStatus = "Releasing the throttle ends the run and requests disarm.";
+      else if (jigReady && !jigArming && angles.some(a => Number(a.value) !== 0))
+        powerStatus = "Arming requires both angle targets at 0°.";
+      else if (jigReady && !jigArming && !fcLevelTarget)
+        powerStatus = "Waiting for PX4 to report level angle targets.";
+      setText(statusLine, powerStatus);
       setText(el("fc-target"), msg.fc_target ? "FC target · roll " + msg.fc_target[0] + "° · pitch " +
           msg.fc_target[1] + "°" : "Waiting for the FC attitude target.");
       const arm = armRequest;

@@ -180,7 +180,10 @@ class Preview:
             link.check()
         except BenchError as exc:
             return web.json_response({"message": str(exc)})
-        return web.json_response(link.leveling.snapshot(time.monotonic(), *link.jig.target))
+        state = link.leveling.snapshot(time.monotonic(), *link.jig.target)
+        if local_page(request) and link.jig.selected:
+            state["jig"] = link.jig.status()
+        return web.json_response(state)
 
     async def stop_status(self, request):
         state = {"stopped": self.latch.stopped, "storage_error": self.latch.storage_error}

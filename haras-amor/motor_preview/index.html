@@ -81,7 +81,7 @@
     <div class="row"><h2 id="level-title">Roll and pitch</h2>
       <button type="button" id="auto-stabilize" role="switch" aria-checked="false" disabled>Auto stabilize · Off</button>
     </div>
-    <p id="jig-status" role="status">Target angles are relative to the FC’s level horizon.</p>
+    <p id="jig-status" role="status">Selecting Auto stabilize starts a disarmed angle check.</p>
     <p id="jig-power-note" hidden>Restrained jig only. Keep the motor-power disconnect within reach.
       Arming can spin motors at zero stick. Individual motor outputs can exceed the 50% stick setting.
       While holding throttle with the mouse, use the arrow keys to adjust roll and pitch.</p>
@@ -99,7 +99,7 @@
     <p id="level-status" role="status">Waiting for FC telemetry.</p>
     <div class="level-table">
       <table aria-label="Jig attitude and proposed corrections">
-        <thead><tr><th>Axis</th><th>Angle</th><th>Rate</th><th>Correction</th><th>More lift</th></tr></thead>
+        <thead><tr><th>Axis</th><th>Measured angle</th><th>Rate</th><th>Predicted correction</th><th id="motor-column">Predicted lift increase</th></tr></thead>
         <tbody>
           <tr id="level-roll"><th scope="row">Roll</th><td>—</td><td>—</td><td>—</td><td>—</td></tr>
           <tr id="level-pitch"><th scope="row">Pitch</th><td>—</td><td>—</td><td>—</td><td>—</td></tr>
