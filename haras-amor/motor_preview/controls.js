@@ -12,7 +12,7 @@ const jigSwitch = el("auto-stabilize"), armButton = el("arm-jig");
 const angles = [el("target-roll"), el("target-pitch")];
 let jig = false, jigReady = false, jigArmed = false, jigArming = false, endingJig = false;
 let armRequest = false, confirmArmAt = 0;
-let fcLevelTarget = false;
+let fcLevelTarget = false, withinStartTilt = false;
 let jigStickPercent = 0;
 let jigTimer = null;
 
@@ -34,7 +34,7 @@ function controls() {
   benchSlider.disabled = !enabled || jig || !!gesture;
   benchHold.disabled = !enabled || jig || Number(benchSlider.value) === 0;
   const jigEnabled = enabled && jigReady && jigArmed && !endingJig;
-  jigSlider.disabled = !jigEnabled || !!gesture;
+  jigSlider.disabled = !enabled || endingJig || jigArming || !!gesture;
   jigHold.disabled = !jigEnabled || Number(jigSlider.value) === 0;
   jigSwitch.disabled = !enabled || endingJig || (!jig && !!gesture);
   jigSwitch.setAttribute("aria-checked", String(jig && jigReady && !endingJig));
@@ -42,7 +42,7 @@ function controls() {
   for (const input of angles) input.disabled = !enabled || !jigReady || endingJig || jigArming;
   el("target-level").disabled = angles[0].disabled;
   armButton.hidden = !enabled || !jigReady || jigArmed || endingJig;
-  armButton.disabled = jigArming || armRequest || !fcLevelTarget || angles.some(a => Number(a.value) !== 0);
+  armButton.disabled = jigArming || armRequest || !fcLevelTarget || !withinStartTilt || angles.some(a => Number(a.value) !== 0);
   el("jig-power-note").hidden = !jig;
 }
 
@@ -70,11 +70,12 @@ el("target-level").addEventListener("click", levelTarget);
 function clearJig() {
   clearTimeout(jigTimer);
   jig = jigReady = jigArmed = jigArming = endingJig = armRequest = false;
-  fcLevelTarget = false;
+  fcLevelTarget = withinStartTilt = false;
   jigStickPercent = 0;
   confirmArmAt = 0;
   armButton.textContent = "Arm secured jig…";
   el("fc-target").textContent = "";
+  el("start-tilt").textContent = "";
   levelTarget();
 }
 
@@ -98,7 +99,7 @@ jigSwitch.addEventListener("click", () => {
   socket.send(JSON.stringify({jig:"on"}));
 });
 armButton.addEventListener("click", () => {
-  if (!jigReady || jigArmed || jigArming || endingJig || latched !== false) return;
+  if (armButton.disabled || !jigReady || jigArmed || jigArming || endingJig || latched !== false) return;
   const now = performance.now();
   if (!confirmArmAt || now - confirmArmAt > 7000) {
     confirmArmAt = now;
@@ -258,6 +259,20 @@ function connect() {
       jigArming = msg.arming;
       jigStickPercent = msg.stick_pct;
       fcLevelTarget = !!msg.fc_target && msg.fc_target.every(a => Math.abs(a) <= .4);
+      const tilt = msg.start_tilt;
+      withinStartTilt = tilt?.within_limit === true;
+      if (!withinStartTilt || !fcLevelTarget) {
+        confirmArmAt = 0;
+        armRequest = false;
+        setText(armButton, "Arm secured jig…");
+      }
+      let tiltText = tilt?.message || "Waiting for measured tilt.";
+      if (Number.isFinite(tilt?.degrees)) {
+        const angle = !withinStartTilt && tilt.degrees === tilt.limit_deg ? "just over " + tilt.limit_deg : tilt.degrees.toFixed(2);
+        tiltText = "Combined tilt " + angle + "° · " + (withinStartTilt ? "within" : "outside") +
+            " the " + tilt.limit_deg + "° start limit.";
+      }
+      setText(el("start-tilt"), jigArmed ? "" : tiltText);
       let detail = "Selecting PX4 Stabilized with zero throttle…";
       if (jigArming) detail = "Waiting for PX4 to confirm or decline arming.";
       else if (jigArmed) detail = jigStickPercent === 0 ?

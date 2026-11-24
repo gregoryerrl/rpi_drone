@@ -99,13 +99,15 @@
         <div class="scale"><span>Nose down −__TRIAL_TILT__°</span><span>Nose up +__TRIAL_TILT__°</span></div></div>
     </div>
     <button type="button" id="target-level" disabled>Level (0° / 0°)</button>
-    <button type="button" id="arm-jig" hidden>Arm secured jig…</button>
+    <p id="start-tilt"></p>
+    <button type="button" id="arm-jig" aria-describedby="start-tilt" hidden>Arm secured jig…</button>
     <p id="fc-target"></p>
-    <div class="row"><label for="jig-throttle">Selected jig throttle</label><output id="jig-value" for="jig-throttle">0%</output></div>
+    <div class="row"><label for="jig-throttle">Jig throttle preset</label><output id="jig-value" for="jig-throttle">0%</output></div>
     <input id="jig-throttle" type="range" min="0" max="__MAX__" step="1" value="0" autocomplete="off"
-           aria-describedby="jig-status" disabled>
+           aria-describedby="jig-throttle-help" disabled>
     <div class="scale" aria-hidden="true"><span>0%</span><span>__MAX__%</span></div>
     <button type="button" id="hold-jig" class="hold-power" aria-describedby="jig-status" disabled>Hold to apply jig throttle</button>
+    <p id="jig-throttle-help">Set overall throttle for PX4 here. Moving the slider sends no power. The hold button applies the preset during an armed jig session.</p>
     <p id="level-status" role="status">Waiting for FC telemetry.</p>
     <div class="level-table">
       <table aria-label="Jig attitude and proposed corrections">

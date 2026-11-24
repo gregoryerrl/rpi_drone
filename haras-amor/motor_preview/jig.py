@@ -9,6 +9,7 @@ from .leveling import MAX_SAMPLE_AGE, TRIAL_TILT_DEG, down_vector, validate_tria
 
 STABILIZED = (7, 0)  # PX4 custom main mode, submode
 ABORT_TILT_DEG = 2 * TRIAL_TILT_DEG
+START_DOWN_Z = math.cos(math.radians(TRIAL_TILT_DEG))
 JIG_PARAMS = ("COM_RC_IN_MODE", "MPC_MAN_TILT_MAX")
 RESTORABLE_MODES = {(1, 0), (2, 0), (3, 0), (4, 3), STABILIZED}  # manual, altitude, position, hold
 
@@ -127,9 +128,20 @@ class NativeJig:
         if sample.sample is None or now - sample.received > MAX_SAMPLE_AGE:
             raise ValueError("Fresh FC attitude is required.")
         roll, pitch, p, q = sample.sample
-        if (not all(math.isfinite(v) for v in (roll, pitch, p, q))
-                or math.cos(roll) * math.cos(pitch) <= 0):
+        if not all(math.isfinite(v) for v in (roll, pitch, p, q)):
             raise ValueError("PX4 must report a valid upright attitude.")
+        down_z = math.cos(roll) * math.cos(pitch)
+        if down_z <= 0:
+            raise ValueError("PX4 must report a valid upright attitude.")
+        return down_z
+
+    def start_tilt(self, now):
+        try:
+            down_z = self.ground_and_attitude(now)
+        except ValueError as exc:
+            return {"within_limit": False, "message": str(exc)}
+        return {"degrees": round(math.degrees(math.acos(down_z)), 2),
+                "limit_deg": TRIAL_TILT_DEG, "within_limit": down_z >= START_DOWN_Z}
 
     def begin(self):
         now = time.monotonic()
@@ -193,7 +205,7 @@ class NativeJig:
         self.link.check()
         if not self.selected or self.link.outputs_stopped:
             raise ValueError("The jig session has stopped.")
-        self.ground_and_attitude(now)
+        down_z = self.ground_and_attitude(now)
         if self.rejection:
             raise ValueError(self.rejection)
         if type(throttle) is not int or not 0 <= throttle <= max_percent or type(arm) is not bool:
@@ -221,10 +233,6 @@ class NativeJig:
         if self.mode != STABILIZED:
             raise ValueError("PX4 left Stabilized mode.")
         if arm or self.armed:
-            measured = self.link.leveling.sample
-            down_z = down_vector(measured[0], measured[1])[2]
-            if arm and down_z < math.cos(math.radians(TRIAL_TILT_DEG)):
-                raise ValueError(f"Bring the jig within {TRIAL_TILT_DEG}° of level before arming.")
             if self.armed and down_z < math.cos(math.radians(ABORT_TILT_DEG)):
                 raise ValueError(f"Measured tilt exceeded the {ABORT_TILT_DEG}° jig cutoff.")
             if now - self.fc_target_at > .7:
@@ -238,6 +246,12 @@ class NativeJig:
             if (self.armed or self.arm_pending or throttle or roll or pitch or self.target != (0, 0)
                     or max(map(abs, self.fc_target)) > .4):
                 raise ValueError("Arm the secured jig at zero throttle with level targets.")
+            if down_z < START_DOWN_Z:
+                self.arm_message = ""
+                self.record_arm("blocked", f"Combined tilt exceeded the {TRIAL_TILT_DEG}° start limit. "
+                                "The jig stayed in standby.")
+                self._stick(0, 0, 0)
+                return
             self.arm_pending, self.arm_time, self.arm_message = True, now, ""
             self.arm_authorized = True
             self._stick(0, 0, 0)
@@ -257,5 +271,6 @@ class NativeJig:
         if notice and self.warning_at >= self.arm_time - 1 and now - self.warning_at < 8:
             notice += " " + self.last_warning
         return {"confirmed": self.confirmed, "armed": self.armed, "arming": self.arm_pending,
+                "start_tilt": self.start_tilt(now),
                 "stick_pct": self.throttle, "target": list(self.target), "notice": notice,
                 "fc_target": self.fc_target if self.confirmed and now - self.fc_target_at < .7 else None}

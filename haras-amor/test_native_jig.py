@@ -222,16 +222,26 @@ class JigTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_level_at_start_and_measured_tilt_cutoff(self):
         packet = await self.enable()
-        self.fc.attitude = (0, math.radians(8))
-        await asyncio.sleep(.06)
-        result = await self.reply(packet, arm=True)
-        self.assertIn("within 5°", result["jig_off"])
+        self.fc.attitude = tuple(map(math.radians, (3.6, -3.6)))
+        async with asyncio.timeout(1):
+            while packet["start_tilt"]["within_limit"]:
+                packet = await self.reply(packet)
+        self.assertGreater(packet["start_tilt"]["degrees"], 5)
+        packet = await self.reply(packet, arm=True)
+        self.assertTrue(packet["confirmed"])
+        self.assertFalse(packet["arming"])
         self.assertFalse(self.fc.armed)
         state = await (await self.client.get("/api/leveling")).json()
         self.assertEqual(state["last_arm_attempt"]["state"], "blocked")
         self.fc.attitude = (0, 0)
-        await asyncio.sleep(.08)
-        packet = await self.arm(await self.enable())
+        async with asyncio.timeout(1):
+            while not packet["start_tilt"]["within_limit"]:
+                packet = await self.reply(packet)
+        self.assertEqual(packet["start_tilt"]["degrees"], 0)
+        self.assertFalse(packet["armed"])
+        self.assertTrue(all(z == 0 for _, _, z in self.fc.sticks))
+        self.assertFalse(any(c == mav.MAV_CMD_COMPONENT_ARM_DISARM for c, *_ in self.fc.commands))
+        packet = await self.arm(packet)
         packet = await self.reply(packet, throttle=3)
         self.fc.attitude = (math.radians(8), math.radians(8))
         await asyncio.sleep(.06)
