@@ -13,7 +13,8 @@ import time
 
 from aiohttp import WSMsgType, web
 
-from .motors import BenchError, DEFAULT_DEVICE, MAX_PERCENT, MotorLink, MotorStopped
+from .leveling import TRIAL_TILT_DEG
+from .motors import BenchError, DEFAULT_DEVICE, HEARTBEAT_AGE, MAX_PERCENT, MotorLink, MotorStopped
 from .stop import StopLatch, stop_marker
 
 
@@ -81,6 +82,28 @@ async def held_slider(ws, link, hold):
     await ws.send_json({"released": hold})
 
 
+async def run_jig(ws, link):
+    try:
+        link.jig.begin()
+        while not link.outputs_stopped:
+            ticket = secrets.token_hex(12)
+            deadline = time.monotonic() + REPLY_TIMEOUT
+            await ws.send_json({"jig_poll": ticket, **link.jig.status()})
+            reply = await message(ws, max(0, deadline - time.monotonic()))
+            if link.outputs_stopped:
+                return
+            if reply == {"jig": "off"}:
+                break
+            if (reply is None or time.monotonic() >= deadline
+                    or set(reply) != {"jig_poll", "roll", "pitch", "throttle", "arm"}
+                    or reply["jig_poll"] != ticket):
+                raise ValueError("Jig input expired. Start a new session.")
+            link.jig.update(reply["roll"], reply["pitch"], reply["throttle"], reply["arm"], MAX_PERCENT)
+            await asyncio.sleep(.06)
+    finally:
+        link.jig.end()
+
+
 async def operate(ws, link):
     await link.ready()
     await ws.send_json({"stopped": True} if link.outputs_stopped else {"ready": True})
@@ -90,6 +113,24 @@ async def operate(ws, link):
         data = await message(ws, 0.4)
         if data is None or link.outputs_stopped:
             continue
+        if data == {"jig": "on"}:
+            reason = "Auto stabilize off."
+            try:
+                await run_jig(ws, link)
+            except ValueError as exc:
+                reason = str(exc)
+            if not link.outputs_stopped:
+                await ws.send_json({"jig_off": reason, "fc_stop": link.jig.stop_message,
+                                    "fc_pending": link.jig.stop_pending})
+                if link.jig.stop_pending:
+                    while link.jig.stop_pending and not link.outputs_stopped:
+                        link.check()
+                        await message(ws, .2)
+                    if not link.outputs_stopped:
+                        await ws.send_json({"ready": True, "jig_disarmed": True})
+            continue
+        if "jig_poll" in data or data == {"jig": "off"}:
+            continue  # An old jig ticket cannot start a bench-slider hold.
         hold = data.get("hold")
         if set(data) != {"hold"} or type(hold) is not int or hold <= last_hold:
             raise BenchError("Expected a new slider press.")
@@ -114,8 +155,10 @@ class Preview:
         self.operator = None
         self.operator_link = None
         self.latch = StopLatch(marker)
+        self.jig_stop_message = ""
         self.page = (HERE / "index.html").read_text().replace("__MAX__", str(MAX_PERCENT))
         self.page = self.page.replace("__USER__", html.escape(getpass.getuser(), quote=True))
+        self.page = self.page.replace("__TRIAL_TILT__", str(TRIAL_TILT_DEG))
         self.script = (HERE / "controls.js").read_bytes()
         self.leveling_script = (HERE / "leveling.js").read_bytes()
 
@@ -137,12 +180,19 @@ class Preview:
             link.check()
         except BenchError as exc:
             return web.json_response({"message": str(exc)})
-        return web.json_response(link.leveling.snapshot(time.monotonic()))
+        return web.json_response(link.leveling.snapshot(time.monotonic(), *link.jig.target))
 
     async def stop_status(self, request):
         state = {"stopped": self.latch.stopped, "storage_error": self.latch.storage_error}
         if self.latch.stopped and local_page(request):
             state["token"] = self.latch.token
+        if self.latch.stopped:
+            link = self.operator_link
+            if self.jig_stop_message and link is not None and not link.jig.stop_pending and not link.jig.armed:
+                if link.system is not None and time.monotonic() - link.last_heartbeat < HEARTBEAT_AGE and not link.fault:
+                    self.jig_stop_message = ""
+                    link.jig.stop_message = "PX4 reports disarmed."
+            state["fc_stop"] = (link.jig.stop_message if link else "") or self.jig_stop_message
         return web.json_response(state)
 
     async def stop_motors(self, request):
@@ -163,6 +213,8 @@ class Preview:
 
     async def reset_stop(self, request):
         require_operator_origin(request)
+        if self.jig_stop_message or (self.operator_link is not None and self.operator_link.jig.stop_pending):
+            raise web.HTTPConflict(text="PX4 disarm is unconfirmed. Use the motor-power disconnect.")
         if request.content_type != "application/json":
             raise web.HTTPUnsupportedMediaType()
         try:
@@ -175,6 +227,7 @@ class Preview:
             raise web.HTTPServiceUnavailable(text="Could not clear the stored motor stop.") from exc
         if not reset:
             raise web.HTTPConflict(text="This reset does not match the current stop.")
+        self.jig_stop_message = ""
         # Old holds and buffered replies must never resume after reset.
         operator = self.operator
         if operator is not None:
@@ -232,6 +285,8 @@ class Preview:
                 if link is not None:
                     link.close()
             finally:
+                if link is not None and link.jig.stop_pending:
+                    self.jig_stop_message = link.jig.stop_message
                 self.operator_link = None
                 self.operator = None
         if error and not ws.closed:

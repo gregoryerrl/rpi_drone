@@ -6,6 +6,94 @@ const idleText = "PX4 disarmed. Hold and drag the slider. Release to stop.";
 let socket = null, ready = false, gesture = null, sequence = 0, pollTimer = null;
 const stopButton = el("motor-stop"), resetButton = el("reset-stop"), stopStatus = el("stop-status");
 let latched = null, stopToken = null, actionId = 0, changingStop = false, needStopConfirmation = false;
+const jigSwitch = el("auto-stabilize"), armButton = el("arm-jig");
+const angles = [el("target-roll"), el("target-pitch")];
+let jig = false, jigReady = false, jigArmed = false, jigArming = false, endingJig = false;
+let armRequest = false, confirmArmAt = 0;
+let fcLevelTarget = false;
+let jigTimer = null;
+
+function setText(element, value) {
+  if (element.textContent !== value) element.textContent = value;
+}
+
+function controls() {
+  const enabled = canControl && ready && latched === false && !changingStop;
+  slider.disabled = !enabled || (jig && (!jigReady || !jigArmed || endingJig));
+  jigSwitch.disabled = !enabled || endingJig || (!jig && !!gesture);
+  jigSwitch.setAttribute("aria-checked", String(jig && jigReady && !endingJig));
+  setText(jigSwitch, "Auto stabilize · " + (endingJig ? "Stopping…" : jigReady ? "On" : jig ? "Starting…" : "Off"));
+  for (const input of angles) input.disabled = !enabled || !jigReady || endingJig || jigArming;
+  el("target-level").disabled = angles[0].disabled;
+  armButton.hidden = !enabled || !jigReady || jigArmed || endingJig;
+  armButton.disabled = jigArming || armRequest || !fcLevelTarget || angles.some(a => Number(a.value) !== 0);
+  el("jig-power-note").hidden = !jig;
+  setText(el("power-label"), jig ? "Jig throttle stick · hold to apply, release to end the run" :
+      "All four motors · propellers off");
+}
+
+function renderAngles() {
+  for (const input of angles) el(input.id + "-value").value = (Number(input.value) > 0 ? "+" : "") + input.value + "°";
+}
+function levelTarget() {
+  for (const input of angles) input.value = "0";
+  renderAngles();
+  controls();
+}
+for (const input of angles) input.addEventListener("input", () => {
+  const other = angles.find(a => a !== input);
+  const radians = Math.PI / 180, cap = Number(input.max);
+  const limit = Math.floor(Math.acos(Math.min(1, Math.cos(cap * radians) /
+      Math.cos(Number(other.value) * radians))) / radians + 0.000001);
+  input.value = String(Math.max(-limit, Math.min(limit, Number(input.value))));
+  confirmArmAt = 0;
+  armButton.textContent = "Arm secured jig…";
+  renderAngles();
+  controls();
+});
+el("target-level").addEventListener("click", levelTarget);
+
+function clearJig() {
+  clearTimeout(jigTimer);
+  jig = jigReady = jigArmed = jigArming = endingJig = armRequest = false;
+  fcLevelTarget = false;
+  confirmArmAt = 0;
+  armButton.textContent = "Arm secured jig…";
+  el("fc-target").textContent = "";
+  levelTarget();
+}
+
+function endJig() {
+  if (!jig || endingJig) return;
+  endingJig = true;
+  armRequest = false;
+  controls();
+  if (socket?.readyState === WebSocket.OPEN) {
+    try { socket.send(JSON.stringify({jig:"off"})); }
+    catch { el("jig-status").textContent = "Jig stop unconfirmed. Use the motor-power disconnect."; }
+  }
+}
+jigSwitch.addEventListener("click", () => {
+  if (jig) { endJig(); return; }
+  if (!ready || latched !== false || gesture || socket?.readyState !== WebSocket.OPEN) return;
+  jig = true;
+  levelTarget();
+  el("jig-status").textContent = "Selecting PX4 Stabilized with zero throttle…";
+  socket.send(JSON.stringify({jig:"on"}));
+});
+armButton.addEventListener("click", () => {
+  if (!jigReady || jigArmed || jigArming || endingJig || latched !== false) return;
+  const now = performance.now();
+  if (!confirmArmAt || now - confirmArmAt > 7000) {
+    confirmArmAt = now;
+    armButton.textContent = "Confirm arm · motors may spin";
+  } else if (now - confirmArmAt > 800) {
+    armRequest = true;
+    confirmArmAt = 0;
+    armButton.textContent = "Arm secured jig…";
+    controls();
+  }
+});
 
 function showLevel() {
   if (!gesture) slider.value = "0";
@@ -17,10 +105,13 @@ function release() {
   gesture = null;
   clearTimeout(pollTimer);
   showLevel();
-  if (old && socket?.readyState === WebSocket.OPEN) {
+  if (old?.jig) {
+    endJig();
+  } else if (old && socket?.readyState === WebSocket.OPEN) {
     try { socket.send(JSON.stringify({release: old.id})); } catch {}
     statusLine.textContent = "Releasing motors…";
   }
+  controls();
 }
 
 function disconnect(reason) {
@@ -28,7 +119,8 @@ function disconnect(reason) {
   const old = socket;
   socket = null;
   ready = false;
-  slider.disabled = true;
+  if (jig) el("jig-status").textContent = "Jig link lost. If motors are powered, use the motor-power disconnect.";
+  clearJig();
   if (old) old.close();
   statusLine.textContent = reason;
   reconnect.hidden = !canControl;
@@ -42,10 +134,10 @@ function applyStopState(state) {
   }
   latched = state.stopped;
   stopToken = state.token || null;
-  slider.disabled = !ready || latched;
+  controls();
   resetButton.hidden = !canControl || !latched || !stopToken;
   const note = state.storage_error ? "Motor stop latched in memory. Could not verify it on disk." :
-      latched ? "Bench motor stop latched." : "";
+      latched ? "Bench motor stop latched." + (state.fc_stop ? " " + state.fc_stop : "") : "";
   if (stopStatus.textContent !== note) stopStatus.textContent = note;
 }
 
@@ -117,14 +209,44 @@ function connect() {
       disconnect(msg.error);
     } else if (msg.stopped) {
       ready = false;
+      if (jig) el("jig-status").textContent = "Pi jig output stopped. Check the FC disarm status.";
+      clearJig();
       if (!changingStop) ++actionId;
       applyStopState({stopped:true, token:stopToken});
       statusLine.textContent = "Motor output blocked. Sensor preview available.";
       refreshStopState();
     } else if (msg.ready) {
       ready = true;
-      slider.disabled = latched !== false;
+      controls();
       statusLine.textContent = idleText;
+      if (msg.jig_disarmed) el("jig-status").textContent = "Auto stabilize off. PX4 reports disarmed.";
+    } else if (msg.jig_off) {
+      if (gesture?.jig) { gesture = null; showLevel(); }
+      clearJig();
+      el("jig-status").textContent = [msg.jig_off, msg.fc_stop].filter(Boolean).join(" ");
+      statusLine.textContent = msg.fc_stop || idleText;
+      if (msg.fc_pending) { ready = false; controls(); }
+    } else if (msg.jig_poll) {
+      if (!jig || endingJig) return;
+      clearTimeout(jigTimer);
+      jigTimer = setTimeout(() => disconnect("Jig link lost. Use the motor-power disconnect if still powered."), 1000);
+      if (document.hidden || !document.hasFocus() || latched !== false) { endJig(); return; }
+      jigReady = msg.confirmed;
+      jigArmed = msg.armed;
+      jigArming = msg.arming;
+      fcLevelTarget = !!msg.fc_target && msg.fc_target.every(a => Math.abs(a) <= .4);
+      setText(el("jig-status"), msg.notice || (jigArmed ? "PX4 armed on jig. The throttle stick controls power." :
+          jigReady ? "PX4 Stabilized selected · disarmed. Move the targets to check the FC response." :
+          "Selecting PX4 Stabilized with zero throttle…"));
+      setText(statusLine, jigArmed ? "Releasing the throttle ends the run and requests disarm." :
+          "Jig throttle stays at zero until PX4 confirms the jig is armed.");
+      setText(el("fc-target"), msg.fc_target ? "FC target · roll " + msg.fc_target[0] + "° · pitch " +
+          msg.fc_target[1] + "°" : "Waiting for the FC attitude target.");
+      const arm = armRequest;
+      armRequest = false;
+      ws.send(JSON.stringify({jig_poll:msg.jig_poll, roll:Number(angles[0].value), pitch:Number(angles[1].value),
+          throttle:jigArmed && gesture?.jig ? Number(slider.value) : 0, arm}));
+      controls();
     } else if (msg.poll && msg.hold === gesture?.id) {
       if (document.hidden || !document.hasFocus()) { release(); return; }
       expectPoll();
@@ -143,9 +265,13 @@ function connect() {
 
 function start(kind, key) {
   if (!ready || latched !== false || gesture || document.hidden || socket?.readyState !== WebSocket.OPEN) return false;
-  gesture = {id: ++sequence, kind, key};
-  expectPoll();
-  socket.send(JSON.stringify({hold: gesture.id}));
+  if (jig && (!jigReady || !jigArmed || endingJig)) return false;
+  gesture = {id: ++sequence, kind, key, jig};
+  if (!jig) {
+    expectPoll();
+    socket.send(JSON.stringify({hold: gesture.id}));
+  }
+  controls();
   statusLine.textContent = "Release to return all four motors to zero.";
   return true;
 }
@@ -165,6 +291,14 @@ slider.addEventListener("lostpointercapture", pointerEnd);
 window.addEventListener("pointermove", event => { if (event.buttons === 0) pointerEnd(event); });
 const adjustKeys = new Set(["ArrowLeft","ArrowRight","ArrowUp","ArrowDown","Home","End","PageUp","PageDown"]);
 slider.addEventListener("keydown", event => {
+  if (gesture?.jig && gesture.kind === "pointer" && event.key.startsWith("Arrow")) {
+    event.preventDefault();
+    const axis = angles[event.key === "ArrowLeft" || event.key === "ArrowRight" ? 0 : 1];
+    if (event.key === "ArrowUp" || event.key === "ArrowRight") axis.stepUp();
+    else axis.stepDown();
+    axis.dispatchEvent(new Event("input", {bubbles:true}));
+    return;
+  }
   if (adjustKeys.has(event.key) && !event.repeat) start("key", event.key);
 });
 window.addEventListener("keyup", event => {
@@ -173,7 +307,7 @@ window.addEventListener("keyup", event => {
 slider.addEventListener("input", showLevel);
 slider.addEventListener("change", showLevel);
 slider.addEventListener("blur", release);
-window.addEventListener("blur", release);
+window.addEventListener("blur", () => { release(); endJig(); });
 window.addEventListener("pagehide", () => disconnect("Preview closed."));
 window.addEventListener("offline", () => disconnect("Network disconnected."));
 document.addEventListener("visibilitychange", () => {
@@ -199,6 +333,7 @@ showLevel();
 if (canControl) {
   connect();
 } else {
+  el("jig-status").textContent = "Open the SSH operator preview to set roll and pitch.";
   statusLine.textContent = "Camera preview only. Motor control is available through SSH.";
   el("ssh").hidden = false;
   const user = document.documentElement.dataset.user;

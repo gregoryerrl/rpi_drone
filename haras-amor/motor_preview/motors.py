@@ -7,6 +7,7 @@ import time
 from pymavlink.dialects.v20 import common as mav
 from serial import Serial
 
+from .jig import JIG_PARAMS, NativeJig
 from .leveling import GEOMETRY_PARAMS, LevelingPreview
 
 
@@ -43,6 +44,7 @@ class MotorLink:
             self.active = set()
             self.outputs_stopped = False
             self.leveling = LevelingPreview()
+            self.jig = NativeJig(self)
             self.geometry_queue = deque()
             self.next_geometry_read = float("inf")
             self.loop.add_reader(self.port.fileno(), self._read)
@@ -64,10 +66,14 @@ class MotorLink:
                     continue
                 if self.system is not None and msg.get_srcSystem() != self.system:
                     continue
+                if msg.get_type() == "HEARTBEAT" and (msg.autopilot != mav.MAV_AUTOPILOT_PX4
+                                                     or msg.type != mav.MAV_TYPE_QUADROTOR):
+                    self._fail("Expected a PX4 quadrotor on this USB port.")
+                    continue
+                if self.system is not None or msg.get_type() == "HEARTBEAT":
+                    self.jig.observe(msg, time.monotonic())
                 if msg.get_type() == "HEARTBEAT":
-                    if msg.autopilot != mav.MAV_AUTOPILOT_PX4 or msg.type != mav.MAV_TYPE_QUADROTOR:
-                        self._fail("Expected a PX4 quadrotor on this USB port.")
-                    elif msg.base_mode & mav.MAV_MODE_FLAG_SAFETY_ARMED:
+                    if self.jig.armed and not (self.jig.selected or self.jig.stop_pending):
                         self._fail("Flight controller armed. Bench control stopped.")
                     else:
                         self.system = msg.get_srcSystem()
@@ -89,12 +95,13 @@ class MotorLink:
 
     def _geometry_value(self, msg):
         name = msg.param_id
-        if name not in GEOMETRY_PARAMS:
+        if name not in GEOMETRY_PARAMS and name not in JIG_PARAMS:
             return
-        if name == "CA_ROTOR_COUNT" and msg.param_type == mav.MAV_PARAM_TYPE_INT32:
+        integer = name in ("CA_ROTOR_COUNT", "COM_RC_IN_MODE")
+        if integer and msg.param_type == mav.MAV_PARAM_TYPE_INT32:
             # PX4 encodes this integer byte-for-byte in the MAVLink float field.
             value, = struct.unpack("<i", struct.pack("<f", msg.param_value))
-        elif name != "CA_ROTOR_COUNT" and msg.param_type == mav.MAV_PARAM_TYPE_REAL32:
+        elif not integer and msg.param_type == mav.MAV_PARAM_TYPE_REAL32:
             value = msg.param_value
         else:
             self.leveling.parameters.pop(name, None)
@@ -102,10 +109,10 @@ class MotorLink:
         self.leveling.parameters[name] = value
 
     def _read_missing_geometry(self, now):
-        if now < self.next_geometry_read or self.active or self.fault or self.system is None:
+        if now < self.next_geometry_read or self.active or self.jig.armed or self.fault or self.system is None:
             return
         if not self.geometry_queue:
-            self.geometry_queue.extend(n for n in GEOMETRY_PARAMS if n not in self.leveling.parameters)
+            self.geometry_queue.extend(n for n in (*JIG_PARAMS, *GEOMETRY_PARAMS) if n not in self.leveling.parameters)
         if self.geometry_queue:
             name = self.geometry_queue.popleft()
             self.wire.param_request_read_send(self.system, 1, name.encode("ascii"), -1)
@@ -118,8 +125,12 @@ class MotorLink:
             raise BenchError("Flight controller heartbeat lost.")
 
     def _send(self, command, *params):
-        if self.outputs_stopped and command == mav.MAV_CMD_ACTUATOR_TEST and params[:2] != (0, 0):
+        if (command == mav.MAV_CMD_ACTUATOR_TEST and params[:2] != (0, 0)
+                and (self.outputs_stopped or self.jig.selected or self.jig.stop_pending or self.jig.armed)):
             raise MotorStopped("Bench motor stop latched.")
+        if (command == mav.MAV_CMD_COMPONENT_ARM_DISARM and params[0]
+                and (self.outputs_stopped or not self.jig.selected or not self.jig.confirmed)):
+            raise MotorStopped("Jig arming blocked.")
         self.wire.command_long_send(self.system, 1, command, 0, *params)
 
     async def _confirmed(self, timeout, command, *params):
@@ -177,6 +188,13 @@ class MotorLink:
         # Never re-enable an old session: its browser replies or ACKs can be in
         # flight. A reset opens a new session before accepting a new gesture.
         self.outputs_stopped = True
+        try:
+            if self.jig.stop_pending:
+                self.jig.request_disarm()
+            else:
+                self.jig.end()
+        except OSError:
+            pass  # Keep the inhibit engaged if USB has gone away.
         if (self.command == mav.MAV_CMD_ACTUATOR_TEST and self.waiting is not None
                 and not self.waiting.done()):
             self.waiting.set_exception(MotorStopped("Bench motor stop latched."))
@@ -187,6 +205,10 @@ class MotorLink:
         # Each positive command also expires inside PX4 if the port or Pi disappears.
         self.loop.remove_reader(self.port.fileno())
         try:
+            try:
+                self.jig.end()
+            except OSError:
+                pass
             self._release_active()
         finally:
             self.port.close()

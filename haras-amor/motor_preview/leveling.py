@@ -4,6 +4,7 @@ import math
 
 NATURAL_FREQUENCY = 1.0  # 1/s in the ideal, critically damped jig model
 MAX_ACCELERATION = math.radians(15)  # rad/s², vector magnitude
+TRIAL_TILT_DEG = 5
 HINT_THRESHOLD = math.radians(0.5)  # rad/s², suppress small display cues only
 MAX_SAMPLE_AGE = 0.35
 ROTOR_FIELDS = ("PX", "PY", "AX", "AY", "AZ")
@@ -12,28 +13,43 @@ GEOMETRY_PARAMS = ("CA_ROTOR_COUNT",) + tuple(
 )
 
 
-def leveling_acceleration(roll, pitch, p, q):
+def down_vector(roll, pitch):
+    """Earth-down expressed in the forward/right/down body frame."""
+    return -math.sin(pitch), math.sin(roll) * math.cos(pitch), math.cos(roll) * math.cos(pitch)
+
+
+def validate_trial_target(roll_deg, pitch_deg):
+    for angle in (roll_deg, pitch_deg):
+        if type(angle) not in (int, float) or not -TRIAL_TILT_DEG <= angle <= TRIAL_TILT_DEG:
+            raise ValueError(f"Target angles must be between −{TRIAL_TILT_DEG}° and +{TRIAL_TILT_DEG}°.")
+    down_z = down_vector(math.radians(roll_deg), math.radians(pitch_deg))[2]
+    if down_z < math.cos(math.radians(TRIAL_TILT_DEG)) - 1e-12:
+        raise ValueError(f"Combined target tilt exceeds {TRIAL_TILT_DEG}°.")
+
+
+def leveling_acceleration(roll, pitch, p, q, target_roll=0.0, target_pitch=0.0):
     """Return the proposed body roll and pitch accelerations in rad/s²."""
-    if not all(math.isfinite(v) for v in (roll, pitch, p, q)):
+    if not all(math.isfinite(v) for v in (roll, pitch, p, q, target_roll, target_pitch)):
         raise ValueError("Invalid attitude or angular rate.")
     if abs(roll) > math.pi or abs(pitch) > math.pi / 2:
         raise ValueError("Attitude outside the expected Euler-angle range.")
 
-    # Earth-down, expressed in forward/right/down body coordinates. The cross
-    # product of body-down with earth-down supplies the shortest leveling axis.
-    down_x = -math.sin(pitch)
-    down_y = math.sin(roll) * math.cos(pitch)
-    down_z = math.cos(roll) * math.cos(pitch)
+    down_x, down_y, down_z = down_vector(roll, pitch)
     if down_z <= 1e-6:
         raise ValueError("Outside the upright jig range.")
-    horizontal = math.hypot(down_x, down_y)
-    tilt = math.atan2(horizontal, down_z)
-    error_scale = tilt / horizontal if horizontal else 0.0
+    tx, ty, tz = down_vector(target_roll, target_pitch)
+    # Cross and dot products give the axis and angle between the target and
+    # measured gravity directions. Yaw is free on the two-axis jig.
+    axis_x, axis_y = ty * down_z - tz * down_y, tz * down_x - tx * down_z
+    axis_z = tx * down_y - ty * down_x
+    sine = math.hypot(axis_x, axis_y, axis_z)
+    cosine = tx * down_x + ty * down_y + tz * down_z
+    error_scale = math.atan2(sine, cosine) / sine if sine else 0.0
 
     gain = NATURAL_FREQUENCY ** 2 * error_scale
     damping = 2 * NATURAL_FREQUENCY
-    roll_accel = -down_y * gain - p * damping
-    pitch_accel = down_x * gain - q * damping
+    roll_accel = axis_x * gain - p * damping
+    pitch_accel = axis_y * gain - q * damping
     magnitude = math.hypot(roll_accel, pitch_accel)
     if not math.isfinite(magnitude):
         raise ValueError("Invalid angular acceleration.")
@@ -85,19 +101,20 @@ class LevelingPreview:
         self.stamp, self.received = stamp, now
         self.sample = roll, pitch, p, q
 
-    def snapshot(self, now):
+    def snapshot(self, now, target_roll=0, target_pitch=0):
         if self.sample is None:
             return {"message": "Waiting for a fresh PX4 attitude sample."}
         if not 0 <= now - self.received <= MAX_SAMPLE_AGE:
             return {"message": "Attitude stream is stale."}
         roll, pitch, p, q = self.sample
         try:
-            accelerations = leveling_acceleration(roll, pitch, p, q)
+            accelerations = leveling_acceleration(roll, pitch, p, q, math.radians(target_roll),
+                                                 math.radians(target_pitch))
         except ValueError as exc:
             return {"message": str(exc)}
         try:
             corners = rotor_corners(self.parameters)
-            message = "Target is level. Corrections are display only."
+            message = "Live attitude. The correction column shows the jig model estimate."
         except ValueError as exc:
             corners = []
             message = str(exc)

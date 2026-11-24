@@ -3,6 +3,7 @@ import unittest
 
 from motor_preview.leveling import (
     LevelingPreview, MAX_ACCELERATION, MAX_SAMPLE_AGE, leveling_acceleration, rotor_corners,
+    validate_trial_target,
 )
 
 
@@ -15,6 +16,27 @@ def quad_geometry(positions=((1, 1), (-1, -1), (1, -1), (-1, 1))):
 
 
 class LevelingTests(unittest.TestCase):
+    def test_trial_cap_applies_to_combined_tilt(self):
+        for target in ((0, 0), (5, 0), (0, -5), (3, -4)):
+            validate_trial_target(*target)
+        for target in ((5, 1), (-4, -4), (45, 0), (0, math.nan), (True, 0)):
+            with self.subTest(target=target), self.assertRaises(ValueError):
+                validate_trial_target(*target)
+
+    def test_holds_a_tilted_target_and_returns_to_level(self):
+        roll, pitch, p, q = 0.0, 0.0, 0.0, 0.0
+        dt = .02
+        for target in ((3, -4), (-2, 1), (0, 0)):
+            target_roll, target_pitch = map(math.radians, target)
+            for step in range(600):
+                if step == 250:
+                    p += math.radians(3)
+                ax, ay = leveling_acceleration(roll, pitch, p, q, target_roll, target_pitch)
+                p, q = p + ax * dt, q + ay * dt
+                roll, pitch = roll + p * dt, pitch + q * dt
+            self.assertAlmostEqual(roll, target_roll, delta=math.radians(.05))
+            self.assertAlmostEqual(pitch, target_pitch, delta=math.radians(.05))
+
     def test_axis_signs_and_rate_braking(self):
         rad = math.radians
         self.assertEqual(leveling_acceleration(0, 0, 0, 0), (0, 0))
