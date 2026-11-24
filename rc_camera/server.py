@@ -16,6 +16,15 @@ from .research import CENTER, MANUAL_SPEED, MAX_GAP, LiveTrial, PixelLock
 from .mount import RadioRig
 
 HERE = Path(__file__).resolve().parent
+MAX_MANUAL_RATE = 1800.0  # µs of servo command per second at full stick
+
+
+def manual_rates(pan, tilt, maximum):
+    stick = np.array([pan, tilt], dtype=float)
+    fine = min(MANUAL_SPEED, maximum)
+    # Shape each axis separately so a small tilt correction stays fine during a fast pan.
+    rates = fine * stick + (maximum - fine) * stick**3
+    return rates / max(1.0, np.linalg.norm(rates) / maximum)
 
 
 class CameraControl:
@@ -24,6 +33,7 @@ class CameraControl:
         self.decoder = Decoder()
         self.high = self.cycle_switch = False
         self.manual_pose = None
+        self.max_manual_rate = min(MAX_MANUAL_RATE, trial.rig.catchup_speed)
 
     def unlock(self):
         if self.trial.tracker.state != "Manual":
@@ -51,10 +61,9 @@ class CameraControl:
         elif enabled and not controls.follow and (controls.pan or controls.tilt):
             if self.manual_pose is None:
                 self.manual_pose = trial.rig.position.astype(float)
-            direction = np.array([controls.pan, controls.tilt])
-            direction /= max(1.0, np.linalg.norm(direction))
-            self.manual_pose = np.clip(self.manual_pose - np.sign(trial.gains) * direction
-                                       * MANUAL_SPEED * min(dt, 0.1), *trial.rig.limits)
+            rates = manual_rates(controls.pan, controls.tilt, self.max_manual_rate)
+            step = -np.sign(trial.gains) * rates * min(dt, 0.1)
+            self.manual_pose = np.clip(self.manual_pose + step, *trial.rig.limits)
             target = np.rint(self.manual_pose)
             if np.any(target != trial.rig.position):
                 trial.rig.move(target)

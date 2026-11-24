@@ -11,12 +11,13 @@ from urllib.request import ProxyHandler, build_opener
 
 MAX_RC_AGE = 0.25
 SWITCH_HOLD = 0.10
-DEADBAND_US = 45
+DEADBAND_US = 30
+FULL_DEFLECTION_US = 450  # Full right/up on this TX16S reads about 1955–1962 µs.
 
 
 def axis(pulse):
     delta = pulse - 1500
-    magnitude = min(1.0, max(0.0, (abs(delta) - DEADBAND_US) / (500 - DEADBAND_US)))
+    magnitude = min(1.0, max(0.0, (abs(delta) - DEADBAND_US) / (FULL_DEFLECTION_US - DEADBAND_US)))
     return math.copysign(magnitude, delta)
 
 

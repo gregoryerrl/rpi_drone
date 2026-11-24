@@ -10,6 +10,8 @@ Use the TX16S to aim the stand, then lock onto the visual detail under the cente
 | SG high, about 2000 µs | Select the object at the crosshair once and start following. |
 | SG low, about 1000 µs | Follow off, with manual steering available. |
 
+The manual stick holds the current pose within 30 µs of center. Beyond that, the speed increases gradually for small corrections and more steeply toward full stick. On a single axis, quarter, half, and full travel beyond the deadband command about 84, 315, and 1,800 µs/s on the tested stand. Full speed is reached at 1,050 or 1,950 µs. Releasing the stick holds the new aim.
+
 Open `http://<pi-address>:8001/live` to see the crosshair, channel values and commanded servo positions. Center the sticks, aim at a textured feature with SG in the middle, then flip SG high. The preview shows **Acquiring** and **Following**. If the target is lost, lower SG, aim again and raise it for a fresh selection. A stale radio or camera feed stops movement. After a signal loss during follow, cycle SG to select again. If the servo board disconnects, the preview stays live and the Pi checks for its return once a second.
 
 ## Run

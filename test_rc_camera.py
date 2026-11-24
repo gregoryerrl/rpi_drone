@@ -80,6 +80,28 @@ class RCControlTests(unittest.TestCase):
             self.assertEqual(lock.call_count, 2)
             self.assertEqual(self.tick(7,ch8=1503)["mode"], "Manual")
 
+    def test_manual_command_rate_by_stick_throw(self):
+        for pulse, expected in ((1530, 0), (1635, 84), (1740, 315), (1845, 838),
+                                (1955, 1800), (1040, -1800)):
+            with self.subTest(pulse=pulse):
+                self.tick(4)
+                self.rig.position[:] = [1350, 1100]
+                self.tick(3, ch1=pulse)
+                before = self.rig.position.copy()
+                self.tick(4, ch1=pulse)
+                # Four frames at 24 fps. Allow for rounding of the two pulse readings.
+                self.assertAlmostEqual((before[0] - self.rig.position[0]) * 6, expected, delta=6)
+                self.assertEqual(self.rig.position[1], before[1])
+
+    def test_small_tilt_adjustment_during_fast_pan(self):
+        self.tick(5)
+        self.tick(3, 1955, 1635)
+        before = self.rig.position.copy()
+        self.tick(4, 1955, 1635)
+        pan, tilt = (self.rig.position - before) * 6
+        self.assertAlmostEqual(pan, -1798, delta=6)
+        self.assertAlmostEqual(tilt, 84, delta=6)
+
     def test_duplicate_packets_cannot_engage_switch_or_extend_steering(self):
         decoder = Decoder()
         for i in range(6):
