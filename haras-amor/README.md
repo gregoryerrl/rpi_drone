@@ -35,6 +35,8 @@ The setup check reports Python driver availability and whether the current user 
 
 Start the jig page on the Pi from `haras-amor/` with `venv/bin/python -m jig_view.server`. Open `http://<pi-address>:8003/` on the same network. This experiment uses the aircraft camera in its mounted orientation and opens the MicoAir USB port read-only. Close any other experiment that owns the camera or FC serial port first. It runs on demand and continues listening to the TX16S when the browser is closed.
 
+**Aircraft battery** shows pack voltage, current, power, and remaining charge from the flight controller. Watts use voltage and current from the same sample. Separate battery reports appear individually. Dashes mark unavailable measurements, and **Not reported** means the FC is online without fresh pack data. The MicoAir743v2 senses pack voltage onboard and accepts a current-sensor signal at the ESC connector. [MicoAir battery monitoring](https://micoair.com/en/docs/flight-controller/micoair743/micoair743v2-flight-controller-manual#battery-voltage-and-current-monitoring) · [MAVLink battery protocol](https://mavlink.io/en/services/battery.html)
+
 | CH8 / SG | Camera |
 | --- | --- |
 | Low, about 1000 µs | Switch off and release any lock. |

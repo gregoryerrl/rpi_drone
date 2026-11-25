@@ -21,6 +21,24 @@
     </div>
   </header>
   <main class="wrap layout">
+    <section class="panel battery-panel" aria-labelledby="batteryHeading">
+      <div class="battery-head">
+        <h2 id="batteryHeading">Aircraft battery</h2>
+        <span class="chip" id="batteryState">Waiting for FC</span>
+      </div>
+      <div id="batteryRows"></div>
+      <template id="batteryTemplate">
+        <div class="battery-pack">
+          <h3 class="battery-name" hidden></h3>
+          <dl class="battery-values">
+            <div><dt>Pack voltage</dt><dd data-field="voltage_v">—</dd></div>
+            <div><dt>Current</dt><dd data-field="current_a">—</dd></div>
+            <div><dt>Power</dt><dd data-field="power_w">—</dd></div>
+            <div><dt>Charge left</dt><dd data-field="remaining_pct">—</dd></div>
+          </dl>
+        </div>
+      </template>
+    </section>
     <section class="panel camera-panel" aria-labelledby="cameraHeading">
       <div class="panel-head">
         <h2 id="cameraHeading">Live camera</h2>

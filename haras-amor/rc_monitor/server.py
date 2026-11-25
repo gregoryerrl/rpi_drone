@@ -23,6 +23,46 @@ MOVE_US = 25
 HIGHLIGHT_S = 0.8
 STALE_S = 1.5
 IDLE_S = 5.0
+BATTERY_STALE_S = 6.0  # BATTERY_STATUS is normally sent once every two seconds.
+CHARGE_STATES = {
+    mav.MAV_BATTERY_CHARGE_STATE_OK: "OK",
+    mav.MAV_BATTERY_CHARGE_STATE_LOW: "Low",
+    mav.MAV_BATTERY_CHARGE_STATE_CRITICAL: "Critical",
+    mav.MAV_BATTERY_CHARGE_STATE_EMERGENCY: "Emergency",
+    mav.MAV_BATTERY_CHARGE_STATE_FAILED: "Failed",
+    mav.MAV_BATTERY_CHARGE_STATE_UNHEALTHY: "Unhealthy",
+    mav.MAV_BATTERY_CHARGE_STATE_CHARGING: "Charging",
+}
+
+
+def pack_millivolts(message):
+    # A single populated slot can hold total pack voltage. Multiple populated
+    # slots contain cell voltages. A missing interior cell makes the total unknown.
+    cells = [*message.voltages, *message.voltages_ext]
+    while cells and cells[-1] in (0, 65535):
+        cells.pop()
+    return sum(cells) if cells and all(0 < mv < 65535 for mv in cells) else None
+
+
+def battery_reading(message):
+    current = None if message.current_battery == -1 else message.current_battery / 100
+    remaining = message.battery_remaining if 0 <= message.battery_remaining <= 100 else None
+    battery_id = charge_state = None
+    if message.get_type() == "BATTERY_STATUS":
+        battery_id = message.id
+        charge_state = CHARGE_STATES.get(message.charge_state)
+        mv = pack_millivolts(message)
+    else:
+        mv = message.voltage_battery if 0 < message.voltage_battery < 65535 else None
+        sensor_present = message.onboard_control_sensors_present & mav.MAV_SYS_STATUS_SENSOR_BATTERY
+        if mv is None and not sensor_present and current in (None, 0) and remaining in (None, 0, 100):
+            return None  # Some FCs publish idle defaults without a battery monitor.
+    if mv is None and current is None and remaining is None and charge_state is None:
+        return None
+    voltage = mv / 1000 if mv is not None else None
+    power = round(voltage * current, 3) if voltage is not None and current is not None else None
+    return {"id": battery_id, "component": message.get_srcComponent(), "voltage_v": voltage,
+            "current_a": current, "power_w": power, "remaining_pct": remaining, "charge_state": charge_state}
 
 
 @dataclass
@@ -44,6 +84,8 @@ class Inputs:
         self.attitude = None
         self.attitude_stamp = None
         self.attitude_at = None
+        self.battery_packs = {}
+        self.system_battery = None
         self.reset_channels(status)
 
     def reset_channels(self, status):
@@ -54,11 +96,19 @@ class Inputs:
         self.unhealthy_at = None
 
     def update(self, message, now):
-        if message.get_srcComponent() != mav.MAV_COMP_ID_AUTOPILOT1:
-            return
         if self.system is not None and message.get_srcSystem() != self.system:
             return
         kind = message.get_type()
+        if kind == "BATTERY_STATUS" and self.system is not None:
+            key = (message.get_srcComponent(), message.id)
+            reading = battery_reading(message)
+            if reading is None:
+                self.battery_packs.pop(key, None)
+            else:
+                self.battery_packs[key] = (now, reading)
+            return
+        if message.get_srcComponent() != mav.MAV_COMP_ID_AUTOPILOT1:
+            return
         if kind == "HEARTBEAT" and message.autopilot != mav.MAV_AUTOPILOT_INVALID:
             self.system = message.get_srcSystem()
             self.armed = bool(message.base_mode & mav.MAV_MODE_FLAG_SAFETY_ARMED)
@@ -76,6 +126,8 @@ class Inputs:
                                      "pitch": round(math.degrees(message.pitch), 1)}
             return
         if kind == "SYS_STATUS":
+            if self.system is not None:
+                self.system_battery = (now, battery_reading(message))
             flag = mav.MAV_SYS_STATUS_SENSOR_RC_RECEIVER
             monitored = message.onboard_control_sensors_present & message.onboard_control_sensors_enabled
             if monitored & flag and not message.onboard_control_sensors_health & flag:
@@ -108,6 +160,15 @@ class Inputs:
         self.latest = changes or [c for c in self.latest if c["number"] in channels]
         self.status = "Receiving" if channels else "Waiting for RC input"
 
+    def batteries(self, now):
+        packs = [reading for key, (stamp, reading) in sorted(self.battery_packs.items())
+                 if 0 <= now - stamp <= BATTERY_STALE_S]
+        if not packs and self.system_battery is not None:
+            stamp, reading = self.system_battery
+            if reading is not None and 0 <= now - stamp <= BATTERY_STALE_S:
+                packs.append(reading)
+        return packs
+
     def snapshot(self, now):
         if self.last_packet is not None and now - self.last_packet > STALE_S:
             self.reset_channels("RC data stopped")
@@ -118,6 +179,7 @@ class Inputs:
             "fc_armed": self.armed if heartbeat_fresh else None,
             "fc_mode": self.mode if heartbeat_fresh else None,
             "attitude_deg": self.attitude if heartbeat_fresh and attitude_fresh else None,
+            "batteries": self.batteries(now) if heartbeat_fresh else [],
             "received_at": self.last_packet,  # Pi monotonic clock, stamped when the FC packet arrived
             "channels": [
                 {"number": n, "value": ch.value,

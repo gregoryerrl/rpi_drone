@@ -16,6 +16,7 @@ let lastFrame = -1;
 let lastDraw = 0;
 let videoLive = false;
 let crop = {x: 0.5, y: 0.5, span: 1};
+let lastBatteryDisplay;
 
 function badge(id, label, live) {
   const chip = byId(id);
@@ -99,10 +100,47 @@ function trackingStatus() {
   byId("sim").textContent = videoLive && mode === "Following" ? "15%" : "0%";
 }
 
+const batteryUnits = {
+  voltage_v: [2, " V"], current_a: [2, " A"], power_w: [1, " W"], remaining_pct: [0, "%"]
+};
+
+function showBatteries(reported, fcLive) {
+  const packs = fcLive && Array.isArray(reported) ? reported : [];
+  const display = JSON.stringify([fcLive, packs]);
+  if (display === lastBatteryDisplay) return;
+  lastBatteryDisplay = display;
+  const warning = packs.some(pack => pack.charge_state && !["OK", "Charging"].includes(pack.charge_state));
+  let status = fcLive ? "Not reported" : "Waiting for FC";
+  if (packs.length === 1) status = packs[0].charge_state || "Live";
+  if (packs.length > 1) status = warning ? "Battery warning" : "Live";
+  badge("batteryState", status, packs.length > 0 && !warning);
+  byId("batteryState").classList.toggle("warning", warning);
+
+  const rows = document.createDocumentFragment();
+  for (const pack of packs.length ? packs : [{}]) {
+    const row = byId("batteryTemplate").content.cloneNode(true);
+    if (packs.length > 1) {
+      const name = row.querySelector(".battery-name");
+      name.hidden = false;
+      const sharedId = packs.some(other => other.id === pack.id && other.component !== pack.component);
+      name.textContent = "Battery ID " + pack.id + (sharedId ? " · Component " + pack.component : "")
+        + (pack.charge_state ? " · " + pack.charge_state : "");
+    }
+    for (const cell of row.querySelectorAll("[data-field]")) {
+      const key = cell.dataset.field;
+      const [places, unit] = batteryUnits[key];
+      if (Number.isFinite(pack[key])) cell.textContent = pack[key].toFixed(places) + unit;
+    }
+    rows.append(row);
+  }
+  byId("batteryRows").replaceChildren(rows);
+}
+
 function showTelemetry(data) {
   telemetry = data;
   const radio = data?.radio;
   const fcLive = typeof radio?.fc_armed === "boolean";
+  showBatteries(radio?.batteries, fcLive);
   const rcLive = data?.rc_live === true;
   link("pi", data ? "Online" : "Offline", Boolean(data));
   link("fc", fcLive ? (radio.fc_armed ? "Armed" : "Disarmed") : "Waiting", fcLive);

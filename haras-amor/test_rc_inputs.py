@@ -3,7 +3,7 @@ import unittest
 
 from pymavlink.dialects.v20 import ardupilotmega as mav
 
-from rc_monitor.server import Inputs
+from rc_monitor.server import BATTERY_STALE_S, Inputs
 
 
 def channels(*values):
@@ -11,6 +11,98 @@ def channels(*values):
     raw = list(values) + [65535] * (18 - len(values))
     message = sender.rc_channels_encode(0, len(values), *raw, 255)
     return mav.MAVLink(None).parse_char(message.pack(sender))
+
+
+class BatteryInputTests(unittest.TestCase):
+    def setUp(self):
+        self.inputs = Inputs()
+        self.fc = mav.MAVLink(None, srcSystem=1, srcComponent=mav.MAV_COMP_ID_AUTOPILOT1)
+        self.heartbeat(0)
+
+    def receive(self, sender, msg, stamp):
+        self.inputs.update(mav.MAVLink(None).parse_char(msg.pack(sender)), stamp)
+
+    def heartbeat(self, stamp):
+        msg = self.fc.heartbeat_encode(mav.MAV_TYPE_QUADROTOR, mav.MAV_AUTOPILOT_PX4, 0, 0, 3)
+        self.receive(self.fc, msg, stamp)
+
+    def summary(self, stamp, mv, ca, pct, present=False):
+        flag = mav.MAV_SYS_STATUS_SENSOR_BATTERY if present else 0
+        msg = self.fc.sys_status_encode(flag, flag, flag, 0, mv, ca, pct, 0, 0, 0, 0, 0, 0)
+        self.receive(self.fc, msg, stamp)
+
+    def pack(self, stamp, cells, ca=-1, pct=-1, *, extra=(0, 0, 0, 0), state=0, sender=None, ident=0):
+        sender = sender or self.fc
+        msg = sender.battery_status_encode(ident, 0, 0, 32767, list(cells) + [65535] * (10-len(cells)),
+                                           ca, -1, -1, pct, charge_state=state, voltages_ext=extra)
+        self.receive(sender, msg, stamp)
+
+    def packs(self, stamp):
+        return self.inputs.snapshot(stamp)["batteries"]
+
+    def test_system_summary_preserves_real_zeroes_and_drops_unknowns(self):
+        self.summary(.1, 16825, 825, 64)
+        pack, = self.packs(.2)
+        self.assertEqual((pack["voltage_v"], pack["current_a"], pack["remaining_pct"]), (16.825, 8.25, 64))
+        self.assertAlmostEqual(pack["power_w"], 16.825 * 8.25, places=3)
+        self.summary(.3, 15700, 0, 0)
+        pack, = self.packs(.3)
+        self.assertEqual((pack["current_a"], pack["remaining_pct"], pack["power_w"]), (0, 0, 0))
+        self.summary(.4, 65535, -1, -1)
+        self.assertEqual(self.packs(.4), [])
+        self.summary(.5, 65535, 0, 100)
+        self.assertEqual(self.packs(.5), [])
+        self.summary(.6, 65535, 0, 0, present=True)
+        pack, = self.packs(.6)
+        self.assertIsNone(pack["voltage_v"])
+        self.assertIsNone(pack["power_w"])
+        self.assertEqual(pack["remaining_pct"], 0)
+
+    def test_separate_pack_sources_and_no_cross_source_power(self):
+        other_component = mav.MAVLink(None, srcSystem=1, srcComponent=mav.MAV_COMP_ID_BATTERY)
+        other_aircraft = mav.MAVLink(None, srcSystem=2, srcComponent=mav.MAV_COMP_ID_AUTOPILOT1)
+        self.summary(.1, 22000, 1000, 80)
+        self.pack(.2, [4010, 3990, 4000], pct=24, state=mav.MAV_BATTERY_CHARGE_STATE_LOW)
+        self.pack(.3, [15100], ca=120, sender=other_component)
+        self.pack(.4, [50000], sender=other_aircraft, ident=8)
+        primary, secondary = self.packs(.5)
+        self.assertEqual((primary["voltage_v"], primary["charge_state"], primary["remaining_pct"]), (12, "Low", 24))
+        self.assertIsNone(primary["current_a"])
+        self.assertIsNone(primary["power_w"])
+        self.assertAlmostEqual(secondary["power_w"], 18.12)
+        self.assertIsNone(secondary["remaining_pct"])
+        self.assertNotEqual(primary["component"], secondary["component"])
+
+    def test_extended_cells_missing_cells_and_charging(self):
+        self.pack(.1, [4000]*10, ca=-200, pct=54, extra=(3990, 3980, 0, 0),
+                  state=mav.MAV_BATTERY_CHARGE_STATE_CHARGING)
+        pack, = self.packs(.1)
+        self.assertEqual((pack["voltage_v"], pack["current_a"], pack["power_w"], pack["charge_state"]),
+                         (47.97, -2, -95.94, "Charging"))
+        self.pack(.2, [4000, 65535, 3990], ca=300)
+        pack, = self.packs(.2)
+        self.assertIsNone(pack["voltage_v"])
+        self.assertIsNone(pack["power_w"])
+        self.pack(.3, [])
+        self.assertEqual(self.packs(.3), [])
+
+    def test_expiry_fc_reconnect_and_independence_from_rc(self):
+        self.pack(.1, [15200], ca=300)
+        self.inputs.reset_channels("Receiver signal lost")
+        self.assertEqual(self.packs(.2)[0]["voltage_v"], 15.2)
+        self.assertEqual(self.packs(2), [])  # FC heartbeat stopped.
+        future = BATTERY_STALE_S + 1
+        self.heartbeat(future)
+        self.summary(future, 14200, -1, -1)
+        pack, = self.packs(future)
+        self.assertIsNone(pack["id"])
+        self.assertEqual(pack["voltage_v"], 14.2)
+        self.heartbeat(future * 2)
+        self.assertEqual(self.packs(future * 2), [])
+        self.pack(future * 2, [16000])
+        self.inputs.reset("Waiting for flight controller")
+        self.heartbeat(future * 2 + .1)
+        self.assertEqual(self.packs(future * 2 + .1), [])
 
 
 class RcInputTests(unittest.TestCase):
