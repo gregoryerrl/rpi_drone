@@ -37,7 +37,7 @@ function render() {
       : "Outputs are zero. The simulated aircraft is disarmed.";
   } else if (armed && handoffEnds) {
     source = "Timed";
-    percent = 15;
+    percent = 25;
     detail = "All four outputs stop in " + ((handoffEnds - now) / 1000).toFixed(1) + " s.";
   } else if (armed && timedOut) {
     source = "Timed out";
