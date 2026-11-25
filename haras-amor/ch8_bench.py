@@ -1,6 +1,7 @@
-"""One props-off, disarmed CH8 bench run at 20% for up to 20 seconds.
+"""Repeatable props-off, disarmed CH8 bench runs at 20% for up to 20 seconds.
 
-Run venv/bin/python ch8_bench.py from haras-amor. Lower CH8 or raise CH6 to stop.
+Run venv/bin/python ch8_bench.py from haras-amor. Lower CH8 or raise CH6 to stop a run.
+Cycle CH8 low then high for another run. Ctrl-C exits the session.
 """
 import asyncio
 import signal
@@ -28,8 +29,12 @@ async def once(device=motors.DEFAULT_DEVICE):
     accepted = acks = 0
     releases = set()
 
+    exit_requested = False
+
     def stop(why):
-        nonlocal stop_reason, stop_time
+        nonlocal stop_reason, stop_time, exit_requested
+        if why in ('operator stop', 'armed'):
+            exit_requested = True
         if stop_reason is None:
             stop_reason = why
             stop_time = time.monotonic()
@@ -62,7 +67,12 @@ async def once(device=motors.DEFAULT_DEVICE):
         if gap or not valid or (not healthy) or (max(switches[:2]) > 1250) or (running and switches[2] < 1850):
             low_seen = False
             if running:
-                stop('CH6 stop' if switches[1] > 1250 else 'CH8 lowered' if switches[2] < 1850 else 'radio/CH5 interlock')
+                if gap or not valid or not healthy or switches[0] > 1250:
+                    stop('radio/CH5 interlock')
+                elif switches[1] > 1250:
+                    stop('CH6 stop')
+                else:
+                    stop('CH8 lowered')
         elif listening:
             if switches[2] <= 1250:
                 low_seen = True
@@ -127,6 +137,15 @@ async def once(device=motors.DEFAULT_DEVICE):
             asyncio.get_running_loop().remove_signal_handler(sig)
         print(stop_reason, 'elapsed', round(stop_time - started, 3) if started else None, 'batches', accepted, 'released', sorted(releases), 'acks', acks, 'armed', link.jig.armed)
 
+    return (not exit_requested and not link.jig.armed and not link.fault
+            and stop_reason in ('CH6 stop', 'CH8 lowered', '20-second cutoff')
+            and releases == set(motors.MOTORS) and acks >= len(releases))
+
+
+async def session(device=motors.DEFAULT_DEVICE):
+    while await once(device):
+        print('Run finished. Cycle CH8 low and high for another run, or press Ctrl-C to exit.', flush=True)
+
 
 if __name__ == '__main__':
-    asyncio.run(once())
+    asyncio.run(session())
