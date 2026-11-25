@@ -21,14 +21,14 @@
     <section class="panel">
       <div class="panel-head"><h2>Virtual radio</h2></div>
       <div class="switch-controls">
-        <p>Use these on-screen switches to test a ten-second handoff. All four motor outputs are simulated in this tab.</p>
+        <p>The on-screen switches run a 20-second timer. The meter shows all four simulated motor outputs.</p>
         <div class="slider-row">
           <label for="manual">Manual throttle · CH3</label>
           <output id="manualValue" for="manual">1%</output>
           <input id="manual" type="range" min="0" max="100" step="1" value="1" autocomplete="off">
         </div>
         <label class="virtual-switch"><input id="arm" type="checkbox" autocomplete="off"><span>CH5 · Arm</span></label>
-        <label class="virtual-switch"><input id="timed" type="checkbox" autocomplete="off"><span>CH8 · Start 15% for 10 seconds</span></label>
+        <label class="virtual-switch"><input id="timed" type="checkbox" autocomplete="off"><span>CH8 · Start 15% for 20 seconds</span></label>
         <label class="virtual-switch"><input id="kill" type="checkbox" autocomplete="off"><span>CH6 · Stop all motors</span></label>
       </div>
     </section>

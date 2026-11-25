@@ -6,7 +6,7 @@ import struct
 import tempfile
 import tty
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from aiohttp import WSServerHandshakeError
 from aiohttp.test_utils import TestClient, TestServer
@@ -196,6 +196,57 @@ class PreviewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(challenge["hold"], hold)
         await ws.send_json(dict(challenge, percent=level))
         return challenge
+
+    async def test_timed_bench_stops_all_four_without_another_request(self):
+        link = MotorLink(self.fc.path)
+        self.addCleanup(link.close)
+        await link.ready()
+        with patch("motor_preview.motors.TIMED_BENCH_SECONDS", 0.35):
+            await link.set_percent(15)
+            await asyncio.sleep(0.10)
+            await link.set_percent(15)
+            await self.fc.output_count(12)
+            self.assertEqual(self.fc.tests[-4:], [(n, 0, 0) for n in range(1, 5)])
+            first, renewals = self.fc.tests[:4], self.fc.tests[4:8]
+            self.assertEqual([motor for motor, _, _ in first], [1, 2, 3, 4])
+            self.assertEqual([motor for motor, _, _ in renewals], [1, 2, 3, 4])
+            for (_, value, initial), (_, renewed, remaining) in zip(first, renewals):
+                self.assertAlmostEqual(value, 0.15)
+                self.assertAlmostEqual(renewed, value)
+                self.assertTrue(0 < remaining < initial <= 0.35)
+            with self.assertRaises(BenchError):
+                await link.set_percent(15)
+            self.assertEqual(len(self.fc.tests), 12)
+
+    async def test_early_release_cancels_timeout_before_a_fresh_run(self):
+        link = MotorLink(self.fc.path)
+        self.addCleanup(link.close)
+        await link.ready()
+        with patch("motor_preview.motors.TIMED_BENCH_SECONDS", 0.3):
+            await link.set_percent(15)
+            await link.set_percent(0)
+        await asyncio.sleep(0.35)
+        self.assertEqual(self.fc.tests[4:], [(n, 0, 0) for n in range(1, 5)])
+        start = link.loop.time()
+        await link.set_percent(15)
+        deadline = link.bench_cutoff.when()
+        self.assertLessEqual(start + 20, deadline)
+        self.assertLessEqual(deadline, link.loop.time() + 20)
+        await link.set_percent(12)
+        self.assertEqual(link.bench_cutoff.when(), deadline)
+        await link.set_percent(0)
+
+    async def test_cutoff_interrupts_an_outstanding_ack(self):
+        link = MotorLink(self.fc.path)
+        self.addCleanup(link.close)
+        await link.ready()
+        self.fc.drop_motor = 2
+        with patch("motor_preview.motors.TIMED_BENCH_SECONDS", 0.1):
+            with self.assertRaisesRegex(BenchError, "bench run complete"):
+                await link.set_percent(15)
+        await self.fc.output_count(4)
+        self.assertEqual([n for n, value, _ in self.fc.tests if value], [1, 2])
+        self.assertEqual(self.fc.tests[2:], [(1, 0, 0), (2, 0, 0)])
 
     async def test_full_range_and_release_then_fresh_press(self):
         ws = await self.connect()

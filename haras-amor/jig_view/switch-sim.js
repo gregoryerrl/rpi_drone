@@ -7,7 +7,9 @@ const timed = byId("timed");
 const kill = byId("kill");
 const manual = byId("manual");
 let armed = false;
+const runSeconds = 20;
 let handoffEnds = 0;
+let timedOut = false;
 let killDisarms = 0;
 let redraw;
 
@@ -16,7 +18,10 @@ function advanceClock(now) {
     armed = false;
     killDisarms = 0;
   }
-  if (handoffEnds && now >= handoffEnds) handoffEnds = 0;
+  if (handoffEnds && now >= handoffEnds) {
+    handoffEnds = 0;
+    timedOut = true;
+  }
 }
 
 function render() {
@@ -33,7 +38,10 @@ function render() {
   } else if (armed && handoffEnds) {
     source = "Timed";
     percent = 15;
-    detail = "Manual throttle resumes in " + ((handoffEnds - now) / 1000).toFixed(1) + " s.";
+    detail = "All four outputs stop in " + ((handoffEnds - now) / 1000).toFixed(1) + " s.";
+  } else if (armed && timedOut) {
+    source = "Timed out";
+    detail = "All four outputs are zero. Cycle virtual CH8 for a new run or CH5 for manual throttle.";
   } else if (armed) {
     source = "Manual";
     percent = Number(manual.value);
@@ -42,7 +50,7 @@ function render() {
   }
   const chip = byId("source");
   if (chip.textContent !== source) chip.textContent = source;
-  chip.classList.toggle("on", armed && !kill.checked);
+  chip.classList.toggle("on", armed && !kill.checked && !timedOut);
   chip.classList.toggle("warning", kill.checked);
   byId("detail").textContent = detail;
   byId("manualValue").textContent = manual.value + "%";
@@ -60,11 +68,13 @@ function switchChanged(event) {
   if (event.target === arm) {
     armed = arm.checked && !kill.checked;
     handoffEnds = killDisarms = 0;
+    timedOut = false;
   } else if (event.target === kill) {
     handoffEnds = 0;
     killDisarms = kill.checked && armed ? now + 5000 : 0;
   } else if (timed.checked && armed && !kill.checked && !handoffEnds) {
-    handoffEnds = now + 10000;
+    timedOut = false;
+    handoffEnds = now + runSeconds * 1000;
   }
   render();
 }

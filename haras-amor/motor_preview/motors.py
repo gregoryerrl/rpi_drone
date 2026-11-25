@@ -14,6 +14,8 @@ from .leveling import GEOMETRY_PARAMS, LevelingPreview
 DEFAULT_DEVICE = "/dev/serial/by-id/usb-MicoAir_MicoAir743v2_0-if00"
 MAX_PERCENT = 50
 MOTORS = (1, 2, 3, 4)
+TIMED_BENCH_PERCENT = 15
+TIMED_BENCH_SECONDS = 20
 PULSE_SECONDS = 0.6
 BATCH_SECONDS = 0.24
 HEARTBEAT_AGE = 1.6
@@ -42,6 +44,7 @@ class MotorLink:
             self.waiting = None
             self.command = None
             self.active = set()
+            self.bench_cutoff = None
             self.outputs_stopped = False
             self.leveling = LevelingPreview()
             self.jig = NativeJig(self)
@@ -161,6 +164,29 @@ class MotorLink:
                               mav.MAVLINK_MSG_ID_AUTOPILOT_VERSION, 0, 0, 0, 0, 0, 0)
         self.next_geometry_read = time.monotonic()
 
+    def _cancel_cutoff(self):
+        if self.bench_cutoff is not None:
+            self.bench_cutoff.cancel()
+            self.bench_cutoff = None
+
+    def _expire_timed_run(self):
+        self.outputs_stopped = True
+        self._fail(f"{TIMED_BENCH_SECONDS:g}-second bench run complete. All motor tests stopped.")
+        self._release_active()
+
+    def _bench_pulse(self, percent):
+        if percent == TIMED_BENCH_PERCENT and self.bench_cutoff is None:
+            self.bench_cutoff = self.loop.call_later(TIMED_BENCH_SECONDS, self._expire_timed_run)
+        if self.bench_cutoff is None:
+            return PULSE_SECONDS
+        # PX4 applies motor-test timeouts in whole milliseconds. Round down so
+        # the last renewal cannot request another full pulse past the cutoff.
+        remaining_ms = int((self.bench_cutoff.when() - self.loop.time()) * 1000)
+        if remaining_ms <= 0:
+            self._expire_timed_run()
+            raise MotorStopped(self.fault)
+        return min(PULSE_SECONDS, remaining_ms / 1000)
+
     async def set_percent(self, percent):
         if type(percent) is not int or not 0 <= percent <= MAX_PERCENT:
             raise BenchError("Motor level outside the bench range.")
@@ -170,13 +196,17 @@ class MotorLink:
         for motor in motors:
             if percent and self.outputs_stopped:
                 raise MotorStopped("Bench motor stop latched.")
+            pulse = self._bench_pulse(percent) if percent else 0
             self.active.add(motor)
             await self._confirmed(deadline - time.monotonic(), mav.MAV_CMD_ACTUATOR_TEST,
-                                  percent / 100, PULSE_SECONDS if percent else 0, 0, 0, motor, 0, 0)
+                                  percent / 100, pulse, 0, 0, motor, 0, 0)
             if not percent:
                 self.active.discard(motor)
+        if not percent:
+            self._cancel_cutoff()
 
     def _release_active(self):
+        self._cancel_cutoff()
         for motor in sorted(self.active):
             try:
                 self._send(mav.MAV_CMD_ACTUATOR_TEST, 0, 0, 0, 0, motor, 0, 0)

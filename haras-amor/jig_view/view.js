@@ -5,6 +5,7 @@ const video = byId("video");
 const picture = video.getContext("2d");
 const horizon = byId("horizon").getContext("2d");
 const axes = ["pitch", "roll"];
+const switchTestSeconds = 20;
 const degrees = (n, places = 0) =>
   (n > 0 ? "+" : n < 0 ? "−" : "") + Math.abs(n).toFixed(places) + "°";
 let attitude = null;
@@ -153,11 +154,11 @@ function showRadioTest(radio, rcLive) {
     return displayRadioMeter("Cycle CH8", "Move CH8 low or middle with CH6 clear, then high.");
   const startIndex = trace.findIndex((sample, i) => i > lower && sample.ch8 === "high");
   const start = trace[startIndex].at;
-  if (trace.slice(startIndex).some(sample => sample.ch6 !== "lower" && sample.at - start < 10))
+  if (trace.slice(startIndex).some(sample => sample.ch6 !== "lower" && sample.at - start < switchTestSeconds))
     return displayRadioMeter("Canceled by CH6", "Cycle CH8 to start a new test.", false, true);
-  const remaining = 10 - (radio.received_at - start);
+  const remaining = switchTestSeconds - (radio.received_at - start);
   if (remaining <= 0)
-    return displayRadioMeter("Complete", "Ten seconds elapsed. Cycle CH8 for another test.");
+    return displayRadioMeter("Complete", switchTestSeconds + " seconds elapsed. Cycle CH8 for another test.");
   displayRadioMeter("Timing", remaining.toFixed(1) + " s remaining.", true);
 }
 
