@@ -45,7 +45,11 @@ Start the jig page on the Pi from `haras-amor/` with `venv/bin/python -m jig_vie
 
 After a lost target, cycle through middle to select again. After startup or a link interruption with CH8 already high, the page waits for a fresh switch movement. All viewers see the same radio selection. The page shows live FC pitch and roll and has two ±45° sliders for comparing reference angles while moving the jig by hand.
 
-The 15% indication appears only in the browser during confirmed tracking. The TX16S and PX4 retain propulsion control throughout. On this aircraft PX4 reported CH1 for roll, CH2 for pitch and CH3 for throttle. The live channel readings let you check which physical stick the current transmitter model sends on each channel.
+The browser shows 15% during confirmed tracking when CH6 is clear and the camera, receiver, and FC data are fresh. High or missing CH6 brings that indicator to zero. The TX16S and PX4 control the actual motors. The live radio panel shows CH1 roll, CH2 pitch, CH3 throttle, CH5 arm input, CH6 kill input, and CH8 camera selection.
+
+Open **Switch simulator** on the jig page to try the handoff with on-screen controls. Raise virtual CH5 to start at 1% manual throttle. Raise virtual CH8 to display 15% on all four outputs for ten seconds, then return to the current manual setting. Virtual CH6 cancels the timer and sets all four outputs to zero immediately. The simulator runs entirely in the browser.
+
+On Haras Amor, PX4 maps the radio kill switch to CH6. With the TX16S as the active input, CH6 high cuts motor outputs immediately. Keep it high until PX4 reports disarmed. The configured delay is five seconds and releasing the switch earlier can restart the motors. [PX4 kill switch](https://docs.px4.io/v1.15/en/config/safety#kill-switch)
 
 ### Live camera and motor slider
 

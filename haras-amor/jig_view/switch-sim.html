@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="connect-src 'none'; form-action 'none'; object-src 'none'">
+  <meta name="theme-color" content="#102628">
+  <title>Switch simulator · Haras Amor</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/style.css">
+  <script defer src="/switch-sim.js"></script>
+</head>
+<body>
+  <header class="mast">
+    <div class="wrap mast-inner">
+      <h1>Haras Amor <span>Switch simulator</span></h1>
+      <a class="mast-link" href="/">Live jig</a>
+    </div>
+  </header>
+  <main class="wrap layout switch-lab">
+    <section class="panel">
+      <div class="panel-head"><h2>Virtual radio</h2></div>
+      <div class="switch-controls">
+        <p>Use these on-screen switches to test a ten-second handoff. All four motor outputs are simulated in this tab.</p>
+        <div class="slider-row">
+          <label for="manual">Manual throttle · CH3</label>
+          <output id="manualValue" for="manual">1%</output>
+          <input id="manual" type="range" min="0" max="100" step="1" value="1" autocomplete="off">
+        </div>
+        <label class="virtual-switch"><input id="arm" type="checkbox" autocomplete="off"><span>CH5 · Arm</span></label>
+        <label class="virtual-switch"><input id="timed" type="checkbox" autocomplete="off"><span>CH8 · Start 15% for 10 seconds</span></label>
+        <label class="virtual-switch"><input id="kill" type="checkbox" autocomplete="off"><span>CH6 · Stop all motors</span></label>
+      </div>
+    </section>
+    <section class="panel" aria-labelledby="virtualOutputHeading">
+      <div class="panel-head">
+        <h2 id="virtualOutputHeading">Virtual output</h2>
+        <span id="source" class="chip" role="status">Disarmed</span>
+      </div>
+      <div class="switch-result">
+        <label for="motorMeter">Command to M1–M4</label>
+        <strong id="percent">0%</strong>
+        <meter id="motorMeter" min="0" max="100" value="0">0%</meter>
+        <p id="detail">Raise virtual CH5 to use the manual throttle.</p>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

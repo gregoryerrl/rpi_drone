@@ -11,6 +11,7 @@ const degrees = (n, places = 0) =>
   (n > 0 ? "+" : n < 0 ? "−" : "") + Math.abs(n).toFixed(places) + "°";
 let attitude = null;
 let telemetry = null;
+let killInputClear = false;
 let generation = 0;
 let lastFrame = -1;
 let lastDraw = 0;
@@ -97,7 +98,7 @@ function trackingStatus() {
   for (const pos of positions)
     byId(pos.toLowerCase()).classList.toggle("active", tracking?.switch === pos);
   // This value lives only in the browser. The flight controller is opened read-only.
-  byId("sim").textContent = videoLive && mode === "Following" ? "15%" : "0%";
+  byId("sim").textContent = videoLive && killInputClear && mode === "Following" ? "15%" : "0%";
 }
 
 const batteryUnits = {
@@ -148,8 +149,15 @@ function showTelemetry(data) {
   link("rc", rcLive ? radio.channels.length + " channels" : "Waiting", rcLive);
   byId("rcState").title = radio?.status || "";
   const channels = new Map(rcLive ? radio.channels.map(c => [c.number, c.value]) : []);
-  for (const n of [1, 2, 3, 8])
+  for (const n of [1, 2, 3, 5, 8])
     byId("ch" + n).textContent = channels.has(n) ? channels.get(n) + " µs" : "—";
+  const killPulse = channels.get(6);
+  // Only the verified low/middle side permits a nonzero visual indicator.
+  // Display transition pulses without claiming a definite switch position.
+  killInputClear = fcLive && killPulse >= 800 && killPulse <= 1650;
+  const killHigh = killPulse >= 1850 && killPulse <= 2200;
+  byId("ch6").textContent = killPulse >= 800 && killPulse <= 2200
+    ? killPulse + " µs" + (killHigh ? " · STOP" : "") : "—";
   attitude = radio?.attitude_deg || null;
   badge("imuState", attitude ? "Live" : "Waiting", Boolean(attitude));
   for (const axis of axes)

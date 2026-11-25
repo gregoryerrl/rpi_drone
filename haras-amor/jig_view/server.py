@@ -236,7 +236,7 @@ def make_app(jig):
 
     app = web.Application()
     app.router.add_get("/", asset)
-    app.router.add_get(r"/{name:index\.html|view\.js|style\.css}", asset)
+    app.router.add_get(r"/{name:index\.html|view\.js|style\.css|switch-sim\.html|switch-sim\.js}", asset)
     app.router.add_get("/api/state", state)
     app.router.add_get("/frame.jpg", frame)
     app.on_startup.append(start)
