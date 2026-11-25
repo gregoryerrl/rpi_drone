@@ -137,12 +137,56 @@ function showBatteries(reported, fcLive) {
   byId("batteryRows").replaceChildren(rows);
 }
 
+function displayRadioMeter(status, detail, active = false, stopped = false) {
+  const chip = byId("radioTestStatus");
+  if (chip.textContent !== status) chip.textContent = status;
+  chip.classList.toggle("on", active);
+  chip.classList.toggle("warning", stopped);
+  byId("radioPercent").textContent = active ? "15%" : "0%";
+  byId("radioMeter").value = active ? 15 : 0;
+  byId("radioTestDetail").textContent = detail;
+}
+
+function showRadioTest(radio, rcLive) {
+  if (typeof radio?.fc_armed !== "boolean")
+    return displayRadioMeter("Waiting for FC", "Waiting for the flight controller heartbeat.");
+  if (!rcLive)
+    return displayRadioMeter("Waiting for radio", "Waiting for fresh TX16S input.");
+  const trace = radio.switch_trace || [];
+  const latest = trace.at(-1);
+  if (!latest)
+    return displayRadioMeter("Waiting for switches", "Both CH6 and CH8 need a valid reading.");
+  if (latest.ch6 === "high")
+    return displayRadioMeter("CH6 stop", "The Pi received the kill switch.", false, true);
+  if (latest.ch6 !== "lower")
+    return displayRadioMeter("Check CH6", "CH6 is between switch positions.", false, true);
+  if (latest.ch8 === "lower")
+    return displayRadioMeter("Ready", "Move CH8 high to start the meter.");
+  if (latest.ch8 !== "high")
+    return displayRadioMeter("Reading CH8", "CH8 is between switch positions.");
+
+  // Reconstruct the display from receiver observations. A browser can join
+  // mid-test, and a momentary CH6 pulse still appears in the history.
+  const lower = trace.findLastIndex(sample => sample.ch8 === "lower");
+  if (lower < 0 || trace[lower].ch6 !== "lower")
+    return displayRadioMeter("Cycle CH8", "Move CH8 low or middle with CH6 clear, then high.");
+  const startIndex = trace.findIndex((sample, i) => i > lower && sample.ch8 === "high");
+  const start = trace[startIndex].at;
+  if (trace.slice(startIndex).some(sample => sample.ch6 !== "lower" && sample.at - start < 10))
+    return displayRadioMeter("Canceled by CH6", "Cycle CH8 to start a new test.", false, true);
+  const remaining = 10 - (radio.received_at - start);
+  if (remaining <= 0)
+    return displayRadioMeter("Complete", "Ten seconds elapsed. Cycle CH8 for another test.");
+  displayRadioMeter("Timing", remaining.toFixed(1) + " s remaining.", true);
+}
+
 function showTelemetry(data) {
   telemetry = data;
   const radio = data?.radio;
   const fcLive = typeof radio?.fc_armed === "boolean";
   showBatteries(radio?.batteries, fcLive);
   const rcLive = data?.rc_live === true;
+  showRadioTest(radio, rcLive);
   link("pi", data ? "Online" : "Offline", Boolean(data));
   link("fc", fcLive ? (radio.fc_armed ? "Armed" : "Disarmed") : "Waiting", fcLive);
   byId("fcState").title = fcLive ? radio.fc_mode || "" : radio?.status || "";

@@ -285,12 +285,12 @@ p {
   text-align: right;
 }
 
-.sim span, .channel, .channel-list, .positions span {
+.sim span, .channel-list, .positions span {
   font-size: .875rem;
   color: var(--muted);
 }
 
-.sim strong, .channel b, .channel-list b {
+.sim strong, .channel-list b {
   font-variant-numeric: tabular-nums;
 }
 
@@ -330,7 +330,7 @@ p {
   display: block;
 }
 
-.positions b, .channel-list b, .channel b {
+.positions b, .channel-list b {
   font-size: .9rem;
   color: var(--ink);
 }
@@ -342,13 +342,47 @@ p {
   padding: .15rem 0;
 }
 
-.radio-panel p {
-  font-size: .8125rem;
-  margin-top: .55rem;
+#radio-test a {
+  color: var(--green);
 }
 
-.radio-panel a {
-  color: var(--green);
+#radio-test {
+  grid-column: 1 / -1;
+}
+
+.radio-test-body {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(12rem, 1fr);
+  gap: 1rem;
+  padding: 0 1.2rem 1.05rem;
+}
+
+.radio-test-meter {
+  text-align: left;
+  border-left: 1px solid var(--line);
+  padding-left: 1rem;
+}
+
+.radio-test-meter label {
+  font-size: .875rem;
+  color: var(--muted);
+}
+
+.radio-test-meter meter {
+  display: block;
+  width: 100%;
+  max-width: 16rem;
+}
+
+@media (max-width: 650px) {
+  .radio-test-body {
+    grid-template-columns: 1fr;
+  }
+  .radio-test-meter {
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    padding: .75rem 0 0;
+  }
 }
 
 .mast-link {

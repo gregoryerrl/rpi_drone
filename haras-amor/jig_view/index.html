@@ -39,6 +39,30 @@
         </div>
       </template>
     </section>
+    <section id="radio-test" class="panel" aria-labelledby="radioTestHeading">
+      <div class="panel-head">
+        <h2 id="radioTestHeading">TX16S switch test</h2>
+        <span id="radioTestStatus" class="chip" role="status">Waiting for radio</span>
+      </div>
+      <div class="radio-test-body">
+        <div>
+          <div class="channel-list" aria-label="Live radio inputs">
+            <span>Arm · CH5 <b id="ch5">—</b></span>
+            <span>Trigger · CH8 <b id="ch8">—</b></span>
+            <span>Kill · CH6 <b id="ch6">—</b></span>
+            <span>Stick throttle · CH3 <b id="ch3">—</b></span>
+          </div>
+          <p>You can leave CH5 low. Move CH8 from low or middle to high for a ten-second test. CH6 high cancels it. The TX16S and PX4 control the real motors.</p>
+          <p><a href="/switch-sim.html">Try the on-screen switches</a></p>
+        </div>
+        <div class="sim radio-test-meter">
+          <label for="radioMeter">Simulated Pi output · M1–M4</label>
+          <strong id="radioPercent">0%</strong>
+          <meter id="radioMeter" min="0" max="100" value="0">0%</meter>
+          <p id="radioTestDetail">Waiting for receiver data.</p>
+        </div>
+      </div>
+    </section>
     <section class="panel camera-panel" aria-labelledby="cameraHeading">
       <div class="panel-head">
         <h2 id="cameraHeading">Live camera</h2>
@@ -53,10 +77,10 @@
           <h3>Lock follow <span id="trackMode" class="chip" aria-live="polite">Waiting</span></h3>
           <p id="trackHint">Waiting for the camera and channel 8.</p>
         </div>
-        <div class="sim"><span>Simulated power</span><strong id="sim">0%</strong></div>
+        <div class="sim"><span>Camera lock simulation</span><strong id="sim">0%</strong></div>
       </div>
       <div class="radio-panel">
-        <div class="ref-heading"><h3>Radio inputs</h3><span class="channel">CH8 <b id="ch8">—</b></span></div>
+        <h3>Camera switch · CH8</h3>
         <ol class="positions" aria-label="CH8 switch positions">
           <li id="low"><b>Low</b><span>Off</span></li>
           <li id="middle"><b>Middle</b><span>Ready / release</span></li>
@@ -65,11 +89,7 @@
         <div class="channel-list" aria-label="Live channel pulses">
           <span>Roll · CH1 <b id="ch1">—</b></span>
           <span>Pitch · CH2 <b id="ch2">—</b></span>
-          <span>Throttle · CH3 <b id="ch3">—</b></span>
-          <span>Arm input · CH5 <b id="ch5">—</b></span>
-          <span>Kill input · CH6 <b id="ch6">—</b></span>
         </div>
-        <p>The TX16S and flight controller handle propulsion. The 15% lock indicator is a browser simulation. <a href="/switch-sim.html">Open switch simulator</a></p>
       </div>
     </section>
     <section class="panel instruments" aria-labelledby="attitudeHeading">

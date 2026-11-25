@@ -163,6 +163,29 @@ class RcInputTests(unittest.TestCase):
         inputs.update(channels(), 2.2)
         self.assertEqual(inputs.snapshot(2.2)["status"], "Waiting for RC input")
 
+    def test_switch_trace_retains_sub_poll_kill_and_resets_on_missing_signal(self):
+        inputs = Inputs()
+
+        def observe(t, six, eight):
+            inputs.update(channels(1500, 1500, 990, 1500, 999, six, 1500, eight), t)
+            return inputs.snapshot(t)["switch_trace"]
+
+        observe(1, 999, 1503)
+        observe(1.02, 999, 2000)
+        observe(1.04, 2000, 2000)
+        trace = observe(1.04, 999, 2000)
+        self.assertEqual([(e["at"], e["ch6"], e["ch8"]) for e in trace], [
+            (1, "lower", "lower"), (1.02, "lower", "high"),
+            (1.04, "high", "high"), (1.04, "lower", "high")])
+        self.assertEqual(observe(1.06, 1005, 1985), trace)
+        self.assertEqual(observe(1.08, 1760, 2000)[-1]["ch6"], "between")
+        self.assertEqual(observe(1.1, 65535, 2000), [])
+        self.assertEqual(observe(1.15, 999, 2000),
+                         [{"at": 1.15, "ch6": "lower", "ch8": "high"}])
+        observe(1.2, 999, 1503)
+        self.assertEqual(observe(1.6, 999, 2000),
+                         [{"at": 1.6, "ch6": "lower", "ch8": "high"}])
+
     def test_receiver_health_failure_suppresses_held_values(self):
         inputs = Inputs()
         inputs.update(channels(1000), 0)

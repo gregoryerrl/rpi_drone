@@ -1,5 +1,6 @@
 """Serve the receiver channels reported by a USB flight controller."""
 import argparse
+from collections import deque
 from contextlib import contextmanager
 from dataclasses import dataclass
 import fcntl
@@ -22,6 +23,7 @@ from pymavlink.dialects.v20 import ardupilotmega as mav
 MOVE_US = 25
 HIGHLIGHT_S = 0.8
 STALE_S = 1.5
+SWITCH_TRACE_GAP_S = 0.25  # A longer gap breaks continuity in the switch display.
 IDLE_S = 5.0
 BATTERY_STALE_S = 6.0  # BATTERY_STATUS is normally sent once every two seconds.
 CHARGE_STATES = {
@@ -72,6 +74,14 @@ class Channel:
     moved_at: float | None = None
 
 
+def switch_band(pulse):
+    if pulse <= 1650:
+        return "lower"
+    if pulse >= 1850:
+        return "high"
+    return "between"
+
+
 class Inputs:
     def __init__(self):
         self.reset("Waiting for receiver")
@@ -94,6 +104,20 @@ class Inputs:
         self.latest = []
         self.last_packet = None
         self.unhealthy_at = None
+        self.switch_trace = deque(maxlen=32)
+
+    def record_switches(self, channels, now):
+        # Record the physical inputs at receiver packet rate, including short taps
+        # between browser polls. The first entry is an observation, not an edge.
+        six = channels.get(6)
+        eight = channels.get(8)
+        if not (six and eight and 800 <= six.value <= 2200 and 800 <= eight.value <= 2200):
+            self.switch_trace.clear()
+            return
+        ch6, ch8 = switch_band(six.value), switch_band(eight.value)
+        previous = self.switch_trace[-1] if self.switch_trace else None
+        if previous is None or (ch6, ch8) != (previous["ch6"], previous["ch8"]):
+            self.switch_trace.append({"at": now, "ch6": ch6, "ch8": ch8})
 
     def update(self, message, now):
         if self.system is not None and message.get_srcSystem() != self.system:
@@ -140,6 +164,8 @@ class Inputs:
             return
         if self.last_packet is not None and now - self.last_packet > STALE_S:
             self.reset_channels("Waiting for receiver")
+        if self.last_packet is not None and not 0 <= now - self.last_packet <= SWITCH_TRACE_GAP_S:
+            self.switch_trace.clear()
         self.last_packet = now
         channels = {}
         changes = []
@@ -157,6 +183,7 @@ class Inputs:
                 ch.anchor, ch.moved_at = value, now
             channels[number] = ch
         self.channels = channels
+        self.record_switches(channels, now)
         self.latest = changes or [c for c in self.latest if c["number"] in channels]
         self.status = "Receiving" if channels else "Waiting for RC input"
 
@@ -181,6 +208,7 @@ class Inputs:
             "attitude_deg": self.attitude if heartbeat_fresh and attitude_fresh else None,
             "batteries": self.batteries(now) if heartbeat_fresh else [],
             "received_at": self.last_packet,  # Pi monotonic clock, stamped when the FC packet arrived
+            "switch_trace": list(self.switch_trace),
             "channels": [
                 {"number": n, "value": ch.value,
                  "active": ch.moved_at is not None and now - ch.moved_at < HIGHLIGHT_S}

@@ -47,7 +47,9 @@ After a lost target, cycle through middle to select again. After startup or a li
 
 The browser shows 15% during confirmed tracking when CH6 is clear and the camera, receiver, and FC data are fresh. High or missing CH6 brings that indicator to zero. The TX16S and PX4 control the actual motors. The live radio panel shows CH1 roll, CH2 pitch, CH3 throttle, CH5 arm input, CH6 kill input, and CH8 camera selection.
 
-Open **Switch simulator** on the jig page to try the handoff with on-screen controls. Raise virtual CH5 to start at 1% manual throttle. Raise virtual CH8 to display 15% on all four outputs for ten seconds, then return to the current manual setting. Virtual CH6 cancels the timer and sets all four outputs to zero immediately. The simulator runs entirely in the browser.
+Open **Try the on-screen switches** on the jig page to use the switch simulator. Raise virtual CH5 to start at 1% manual throttle. Raise virtual CH8 to display 15% on all four outputs for ten seconds, then return to the current manual setting. Virtual CH6 cancels the timer and sets all four outputs to zero immediately. The simulator runs entirely in the browser.
+
+To test with the actual TX16S, open the **TX16S switch test** at `http://<pi-address>:8003/#radio-test`. You can leave CH5 low and motor power disconnected. With CH6 clear, move CH8 from low or middle to high. A browser meter shows a simulated 15% for M1–M4 for up to ten seconds. Moving CH8 back down or raising CH6 clears the meter. A CH6 tap cancels the interval even if the switch returns low between browser updates. Cycle CH8 for a new interval. The Pi reads the receiver pulses independently of the camera, and a break in the radio signal clears the switch history. [MAVLink RC channel telemetry](https://mavlink.io/en/messages/common.html#RC_CHANNELS)
 
 On Haras Amor, PX4 maps the radio kill switch to CH6. With the TX16S as the active input, CH6 high cuts motor outputs immediately. Keep it high until PX4 reports disarmed. The configured delay is five seconds and releasing the switch earlier can restart the motors. [PX4 kill switch](https://docs.px4.io/v1.15/en/config/safety#kill-switch)
 
