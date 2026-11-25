@@ -44,12 +44,12 @@ button:focus-visible, input:focus-visible {
   border-bottom: 3px solid #76c5aa;
 }
 
-.mast-inner, .links, .links li, .panel-head, .camera-controls, .ref-heading, .legend, .legend span, .scale {
+.mast-inner, .links, .links li, .panel-head, .ref-heading, .legend, .legend span, .scale {
   display: flex;
   align-items: center;
 }
 
-.mast-inner, .panel-head, .ref-heading, .camera-controls, .scale {
+.mast-inner, .panel-head, .ref-heading, .scale {
   justify-content: space-between;
 }
 
@@ -260,12 +260,6 @@ canvas {
   display: none;
 }
 
-.camera-controls {
-  padding: 1.15rem 1.2rem;
-  gap: 1.15rem;
-  min-height: 86px;
-}
-
 p, .readouts span, .legend, .scale {
   color: var(--muted);
   line-height: 1.45;
@@ -276,66 +270,15 @@ p {
   margin-top: .28rem;
 }
 
-.camera-controls h3 .chip {
-  margin-left: .28rem;
-}
-
-.sim {
-  flex-shrink: 0;
-  text-align: right;
-}
-
-.sim span, .channel-list, .positions span {
-  font-size: .875rem;
-  color: var(--muted);
-}
-
-.sim strong, .channel-list b {
+.channel-list b {
   font-variant-numeric: tabular-nums;
-}
-
-.sim strong {
-  display: block;
-  color: #7e511a;
-  font-size: 1.25rem;
-}
-
-.radio-panel {
-  border-top: 1px solid var(--line);
-  padding: 1rem 1.2rem;
-}
-
-.positions {
-  display: grid;
-  grid-template-columns: repeat(3,1fr);
-  padding: 0;
-  list-style: none;
-  gap: .4rem;
-  margin: .8rem 0;
-}
-
-.positions li {
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  padding: .45rem .65rem;
-  background: #f8faf9;
-}
-
-.positions li.active {
-  border-color: #549b82;
-  background: #e3f5eb;
-}
-
-.positions b, .positions span {
-  display: block;
-}
-
-.positions b, .channel-list b {
   font-size: .9rem;
   color: var(--ink);
 }
 
 .channel-list {
+  color: var(--muted);
+  font-size: .875rem;
   display: flex;
   flex-wrap: wrap;
   gap: .4rem 1.25rem;
@@ -358,9 +301,15 @@ p {
 }
 
 .radio-test-meter {
-  text-align: left;
   border-left: 1px solid var(--line);
   padding-left: 1rem;
+}
+
+.radio-test-meter strong {
+  display: block;
+  color: #7e511a;
+  font-size: 1.25rem;
+  font-variant-numeric: tabular-nums;
 }
 
 .radio-test-meter label {
@@ -581,11 +530,8 @@ input[type=range] {
   .layout {
     padding-inline: 12px;
   }
-  .panel-head, .camera-controls, .radio-panel {
+  .panel-head {
     padding: .85rem;
-  }
-  .camera-controls {
-    align-items: flex-start;
   }
   .references {
     padding-inline: 1rem;

@@ -31,21 +31,13 @@ The setup check reports Python driver availability and whether the current user 
 
 ## Bench experiments
 
-### CH8 camera lock and flight-jig attitude
+### Live camera, radio switches and flight-jig attitude
 
 Start the jig page on the Pi from `haras-amor/` with `venv/bin/python -m jig_view.server`. Open `http://<pi-address>:8003/` on the same network. This experiment uses the aircraft camera in its mounted orientation and opens the MicoAir USB port read-only. Close any other experiment that owns the camera or FC serial port first. It runs on demand and continues listening to the TX16S when the browser is closed.
 
 **Aircraft battery** shows pack voltage, current, power, and remaining charge from the flight controller. Watts use voltage and current from the same sample. Separate battery reports appear individually. Dashes mark unavailable measurements, and **Not reported** means the FC is online without fresh pack data. The MicoAir743v2 senses pack voltage onboard and accepts a current-sensor signal at the ESC connector. [MicoAir battery monitoring](https://micoair.com/en/docs/flight-controller/micoair743/micoair743v2-flight-controller-manual#battery-voltage-and-current-monitoring) · [MAVLink battery protocol](https://mavlink.io/en/services/battery.html)
 
-| CH8 / SG | Camera |
-| --- | --- |
-| Low, about 1000 µs | Switch off and release any lock. |
-| Middle, about 1500 µs | Release and prepare a new selection. Aim a textured part of the object at the center crosshair. |
-| High, about 2000 µs | Select the center once. After visual confirmation, the preview crops around the moving object. |
-
-After a lost target, cycle through middle to select again. After startup or a link interruption with CH8 already high, the page waits for a fresh switch movement. All viewers see the same radio selection. The page shows live FC pitch and roll and has two ±45° sliders for comparing reference angles while moving the jig by hand.
-
-The browser shows 15% during confirmed tracking when CH6 is clear and the camera, receiver, and FC data are fresh. High or missing CH6 brings that indicator to zero. The TX16S and PX4 control the actual motors. The live radio panel shows CH1 roll, CH2 pitch, CH3 throttle, CH5 arm input, CH6 kill input, and CH8 camera selection.
+The camera shows the full frame in its mounted orientation. The page also shows measured FC pitch and roll, with two ±45° sliders for comparing reference angles while moving the jig by hand. The radio panel shows CH1 roll, CH2 pitch, CH3 stick throttle, CH5 arm input, CH6 kill input, and CH8 switch-test input.
 
 Open **Try the on-screen switches** on the jig page to use the switch simulator. Raise virtual CH5 to start at 1% manual throttle. Raise virtual CH8 to display 15% on all four outputs for ten seconds, then return to the current manual setting. Virtual CH6 cancels the timer and sets all four outputs to zero immediately. The simulator runs entirely in the browser.
 

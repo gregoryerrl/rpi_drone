@@ -5,18 +5,12 @@ const video = byId("video");
 const picture = video.getContext("2d");
 const horizon = byId("horizon").getContext("2d");
 const axes = ["pitch", "roll"];
-const positions = ["Low", "Middle", "High"];
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const degrees = (n, places = 0) =>
   (n > 0 ? "+" : n < 0 ? "−" : "") + Math.abs(n).toFixed(places) + "°";
 let attitude = null;
-let telemetry = null;
-let killInputClear = false;
 let generation = 0;
 let lastFrame = -1;
 let lastDraw = 0;
-let videoLive = false;
-let crop = {x: 0.5, y: 0.5, span: 1};
 let lastBatteryDisplay;
 
 function badge(id, label, live) {
@@ -86,19 +80,6 @@ function drawHorizon() {
   line(horizon, -10, 0, -3, 0);
   line(horizon, 3, 0, 10, 0);
   line(horizon, 0, 1, 0, 6);
-}
-
-function trackingStatus() {
-  const tracking = telemetry?.tracking;
-  const mode = tracking?.mode || "Waiting";
-  if (byId("trackMode").textContent !== mode)
-    byId("trackMode").textContent = mode;
-  byId("trackMode").classList.toggle("on", mode === "Following");
-  byId("trackHint").textContent = tracking?.hint || "Waiting for the Pi.";
-  for (const pos of positions)
-    byId(pos.toLowerCase()).classList.toggle("active", tracking?.switch === pos);
-  // This value lives only in the browser. The flight controller is opened read-only.
-  byId("sim").textContent = videoLive && killInputClear && mode === "Following" ? "15%" : "0%";
 }
 
 const batteryUnits = {
@@ -181,7 +162,6 @@ function showRadioTest(radio, rcLive) {
 }
 
 function showTelemetry(data) {
-  telemetry = data;
   const radio = data?.radio;
   const fcLive = typeof radio?.fc_armed === "boolean";
   showBatteries(radio?.batteries, fcLive);
@@ -196,9 +176,6 @@ function showTelemetry(data) {
   for (const n of [1, 2, 3, 5, 8])
     byId("ch" + n).textContent = channels.has(n) ? channels.get(n) + " µs" : "—";
   const killPulse = channels.get(6);
-  // Only the verified low/middle side permits a nonzero visual indicator.
-  // Display transition pulses without claiming a definite switch position.
-  killInputClear = fcLive && killPulse >= 800 && killPulse <= 1650;
   const killHigh = killPulse >= 1850 && killPulse <= 2200;
   byId("ch6").textContent = killPulse >= 800 && killPulse <= 2200
     ? killPulse + " µs" + (killHigh ? " · STOP" : "") : "—";
@@ -207,61 +184,22 @@ function showTelemetry(data) {
   for (const axis of axes)
     byId(axis + "Read").textContent = attitude ? degrees(attitude[axis], 1) : "—";
   drawHorizon();
-  trackingStatus();
 }
 
-function drawFrame(image, state) {
-  const w = video.width, h = video.height;
-  const now = performance.now();
-  const smooth = 1 - Math.exp(-Math.min((now - lastDraw) / 1000, 0.25) * 9);
-  const box = state.box;
-  if (state.mode === "Following" && box) {
-    crop.span += (0.66 - crop.span) * smooth;
-    const half = crop.span / 2;
-    crop.x = clamp(crop.x + (box[0] - crop.x) * smooth, half, 1 - half);
-    crop.y = clamp(crop.y + (box[1] - crop.y) * smooth, half, 1 - half);
-  } else if (state.mode !== "Holding") {
-    crop = {x: 0.5, y: 0.5, span: 1};
-  }
-  const left = crop.x - crop.span / 2, top = crop.y - crop.span / 2;
-  picture.drawImage(image, left * image.width, top * image.height,
-    crop.span * image.width, crop.span * image.height, 0, 0, w, h);
-
-  picture.save();
-  picture.shadowColor = "#071817";
-  picture.shadowBlur = 3;
-  picture.strokeStyle = "rgba(255,255,255,.95)";
-  picture.lineWidth = 1.5;
-  line(picture, w/2 - 12, h/2, w/2 - 4, h/2);
-  line(picture, w/2 + 4, h/2, w/2 + 12, h/2);
-  line(picture, w/2, h/2 - 12, w/2, h/2 - 4);
-  line(picture, w/2, h/2 + 4, w/2, h/2 + 12);
-  if (box) {
-    const bw = box[2] * w / crop.span, bh = box[3] * h / crop.span;
-    const x = (box[0] - left) * w / crop.span - bw / 2;
-    const y = (box[1] - top) * h / crop.span - bh / 2;
-    picture.strokeStyle = state.mode === "Following" ? "#80ffd1" : "#ffcf71";
-    picture.lineWidth = 2.5;
-    picture.strokeRect(x, y, bw, bh);
-  }
-  picture.restore();
-  lastDraw = now;
-  lastFrame = state.frame;
-  videoLive = true;
+function drawFrame(image, number) {
+  picture.drawImage(image, 0, 0, video.width, video.height);
+  lastDraw = performance.now();
+  lastFrame = number;
   byId("placeholder").hidden = true;
   badge("camState", "Live", true);
-  trackingStatus();
 }
 
 function clearVideo() {
-  videoLive = false;
   lastFrame = -1;
-  crop = {x: 0.5, y: 0.5, span: 1};
   picture.clearRect(0, 0, video.width, video.height);
   byId("placeholder").textContent = "Waiting for camera…";
   byId("placeholder").hidden = false;
   badge("camState", "Waiting", false);
-  trackingStatus();
 }
 
 const active = id => id === generation && !document.hidden;
@@ -292,7 +230,7 @@ async function pollFrame(id) {
       const metadata = JSON.parse(response.headers.get("X-Jig-Frame"));
       const image = await createImageBitmap(await response.blob());
       try {
-        if (active(id)) drawFrame(image, metadata);
+        if (active(id)) drawFrame(image, metadata.frame);
       } finally {
         image.close();
       }

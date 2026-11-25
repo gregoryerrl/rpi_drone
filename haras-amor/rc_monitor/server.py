@@ -237,8 +237,9 @@ def listen_port(path):
 
 
 class Receiver:
-    def __init__(self, path):
+    def __init__(self, path, *, continuous=False):
         self.path = path
+        self.continuous = continuous
         self.inputs = Inputs()
         self.lock = threading.Lock()
         self.wake = threading.Event()
@@ -249,9 +250,13 @@ class Receiver:
     def state(self):
         now = time.monotonic()
         with self.lock:
-            self.view_until = now + IDLE_S
-            self.wake.set()
+            if not self.continuous:
+                self.view_until = now + IDLE_S
+                self.wake.set()
             return self.inputs.snapshot(now)
+
+    def _idle(self):
+        return not self.continuous and time.monotonic() >= self.view_until
 
     def _receive(self):
         with listen_port(self.path) as fd:
@@ -261,7 +266,7 @@ class Receiver:
                 self.inputs.reset("Waiting for RC input")
             while not self.stop.is_set():
                 with self.lock:
-                    if time.monotonic() >= self.view_until:
+                    if self._idle():
                         return
                 if not select.select([fd], [], [], 0.25)[0]:
                     continue
@@ -276,10 +281,11 @@ class Receiver:
 
     def _run(self):
         while not self.stop.is_set():
-            self.wake.wait()
-            self.wake.clear()
+            if not self.continuous:
+                self.wake.wait()
+                self.wake.clear()
             with self.lock:
-                if self.stop.is_set() or time.monotonic() >= self.view_until:
+                if self.stop.is_set() or self._idle():
                     continue
             status = "Waiting for flight controller"
             try:

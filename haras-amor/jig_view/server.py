@@ -1,4 +1,4 @@
-"""Haras Amor's CH8-operated camera experiment with passive MAVLink telemetry."""
+"""Live camera preview and passive flight-jig telemetry for Haras Amor."""
 import argparse
 import asyncio
 from dataclasses import dataclass
@@ -12,103 +12,27 @@ from aiohttp import web
 import cv2
 from numpy import ndarray
 
-from rc_camera.radio import MAX_RC_AGE, SWITCH_HOLD
-from rc_camera.research import FPS, MAX_GAP, SIZE, PixelLock
-from rc_monitor.server import Receiver
+from rc_monitor.server import Receiver, SWITCH_TRACE_GAP_S
 
 
 HERE = Path(__file__).resolve().parent
 DEVICE = "/dev/serial/by-id/usb-MicoAir_MicoAir743v2_0-if00"
-PATCH = 40
+FRAME_SIZE = (640, 360)
+FRAME_RATE = 24
+MAX_FRAME_AGE_S = 0.45
 LOG = logging.getLogger(__name__)
 
 
 def radio_live(radio, now):
     stamp = radio["received_at"]
-    return radio["status"] == "Receiving" and stamp is not None and 0 <= now - stamp <= MAX_RC_AGE
-
-
-def channel_eight(radio, now):
-    if not radio_live(radio, now):
-        return None
-    return next((ch["value"] for ch in radio["channels"]
-                 if ch["number"] == 8 and 800 <= ch["value"] <= 2200), None)
-
-
-def report(mode, hint, switch=None, box=None):
-    return {"mode": mode, "hint": hint, "switch": switch, "box": box}
-
-
-class RadioLock:
-    """A distinct radio switch edge selects the center once for every viewer."""
-    def __init__(self):
-        self.reset()
-
-    def reset(self):
-        self.tracker = None
-        self.level = self.candidate = self.last_packet = None
-        self.since = 0.0
-        self.can_lock = False
-        self.last_frame = None
-
-    def step(self, image, stamp, radio, now):
-        pulse = channel_eight(radio, now)
-        if pulse is None or not 0 <= now - stamp <= MAX_GAP:
-            self.reset()
-            return report("Waiting", "Waiting for fresh camera and CH8 input.")
-        packet = radio["received_at"]
-        if ((self.last_frame is not None and not 0 < stamp - self.last_frame <= MAX_GAP)
-                or (self.last_packet is not None and not 0 <= packet - self.last_packet <= MAX_RC_AGE)):
-            self.reset()
-        self.last_frame = stamp
-        position = "Low" if pulse < 1300 else "High" if pulse > 1700 else "Middle"
-        if self.last_packet != packet:
-            self.last_packet = packet
-            if self.candidate != position:
-                self.candidate, self.since = position, packet
-            elif packet - self.since >= SWITCH_HOLD:
-                self.level = position
-        if self.level is None:
-            return report("Waiting", "Reading the CH8 switch position.")
-        if self.level != "High":
-            self.tracker = None
-            self.can_lock = True
-            if self.level == "Low":
-                return report("Off", "Move CH8 to middle to prepare the lock.", self.level)
-            return report("Ready", "Center the object, then switch CH8 high.", self.level)
-
-        height, width = image.shape[:2]
-        center = (width / 2, height / 2)
-        if self.can_lock:
-            self.can_lock = False
-            self.tracker = PixelLock()
-            self.tracker.start(image, (0, 0), center, PATCH, stamp)
-        elif self.tracker is None:
-            return report("Switch high", "Move CH8 to middle, then high to select the center.", self.level)
-        else:
-            self.tracker.update(image, (0, 0), center, stamp)
-
-        mode = self.tracker.state
-        box = None
-        if mode in {"Following", "Acquiring"}:
-            x, y = self.tracker.point
-            box = [float(x / width), float(y / height), PATCH / width, PATCH / height]
-        hints = {
-            "Acquiring": "Keep the object near the center while the lock settles.",
-            "Following": "The video follows the object. Move CH8 to middle to release.",
-            "Holding": "Visual match uncertain. The video is holding its framing.",
-            "Lost": "Object lost. Move CH8 to middle, center the object, then switch high.",
-        }
-        if mode == "Manual":
-            return report("No detail", "Choose a textured spot. Cycle CH8 through middle to try again.", self.level)
-        return report(mode, hints[mode], self.level, box)
+    return radio["status"] == "Receiving" and stamp is not None and 0 <= now - stamp <= SWITCH_TRACE_GAP_S
 
 
 def camera_frames(stop):
     from picamera2 import Picamera2
     with Picamera2() as camera:
-        config = camera.create_video_configuration(main={"size": SIZE, "format": "RGB888"},
-                                                 controls={"FrameRate": FPS}, buffer_count=3, queue=False)
+        config = camera.create_video_configuration(main={"size": FRAME_SIZE, "format": "RGB888"},
+                                                 controls={"FrameRate": FRAME_RATE}, buffer_count=3, queue=False)
         camera.configure(config)
         camera.start()
         while not stop.is_set():
@@ -127,7 +51,6 @@ class Frame:
     number: int
     image: ndarray
     stamp: float
-    tracking: dict
 
 
 class Jig:
@@ -143,14 +66,11 @@ class Jig:
     def run(self):
         number = 0
         while not self.stop.is_set():
-            tracking = RadioLock()
             try:
-                self.receiver.state()
                 for image, stamp in self.camera(self.stop):
-                    state = tracking.step(image, stamp, self.receiver.state(), time.monotonic())
                     number += 1
                     with self.lock:
-                        self.frame = Frame(number, image, stamp, state)
+                        self.frame = Frame(number, image, stamp)
                         self.error = None
             except Exception as exc:
                 # libcamera can disappear or be busy; the HTTP and RC feeds stay live.
@@ -163,22 +83,14 @@ class Jig:
     def latest(self):
         with self.lock:
             frame = self.frame
-            if frame is not None and 0 <= time.monotonic() - frame.stamp <= MAX_GAP:
+            if frame is not None and 0 <= time.monotonic() - frame.stamp <= MAX_FRAME_AGE_S:
                 return frame
         return None
 
     def state(self):
         radio = self.receiver.state()
-        frame = self.latest()
-        now = time.monotonic()
-        if frame is None:
-            tracking = report("Waiting", "Waiting for live camera frames.")
-        elif channel_eight(radio, now) is None:
-            tracking = report("Waiting", "Waiting for fresh CH8 input.")
-        else:
-            tracking = frame.tracking
-        return {"radio": radio, "rc_live": radio_live(radio, now),
-                "camera_live": frame is not None, "tracking": tracking}
+        return {"radio": radio, "rc_live": radio_live(radio, time.monotonic()),
+                "camera_live": self.latest() is not None}
 
     def jpeg(self, after):
         # Several browsers share a single encoding of each requested frame.
@@ -211,7 +123,7 @@ def make_app(jig):
             raise web.HTTPServiceUnavailable(text="Waiting for camera")
         if jpeg is None:
             return web.Response(status=204)
-        metadata = {"frame": current.number, **current.tracking}
+        metadata = {"frame": current.number}
         return web.Response(body=jpeg, content_type="image/jpeg",
                             headers={"X-Jig-Frame": json.dumps(metadata, separators=(",", ":"))})
 
@@ -252,7 +164,7 @@ def main():
     parser.add_argument("--device", default=DEVICE, help="Read-only MAVLink serial device")
     args = parser.parse_args()
     cv2.setNumThreads(2)
-    web.run_app(make_app(Jig(Receiver(args.device))), host=args.bind, port=args.port, access_log=None)
+    web.run_app(make_app(Jig(Receiver(args.device, continuous=True))), host=args.bind, port=args.port, access_log=None)
 
 
 if __name__ == "__main__":
