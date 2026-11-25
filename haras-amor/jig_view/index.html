@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#102628">
+  <title>Haras Amor · Flight jig</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/style.css">
+  <script defer src="/view.js"></script>
+</head>
+<body>
+  <header class="mast">
+    <div class="wrap mast-inner">
+      <h1>Haras Amor <span>Flight jig</span></h1>
+      <ul class="links" aria-label="Hardware connections">
+        <li><i id="piDot"></i>Pi <b id="piState">Connecting</b></li>
+        <li><i id="fcDot"></i>FC <b id="fcState">Waiting</b></li>
+        <li><i id="rcDot"></i>RC <b id="rcState">Waiting</b></li>
+      </ul>
+    </div>
+  </header>
+  <main class="wrap layout">
+    <section class="panel camera-panel" aria-labelledby="cameraHeading">
+      <div class="panel-head">
+        <h2 id="cameraHeading">Live camera</h2>
+        <span class="chip" id="camState">Connecting</span>
+      </div>
+      <div class="screen">
+        <canvas id="video" width="640" height="360" role="img" aria-label="Live camera with a center crosshair and a tracking box"></canvas>
+        <div id="placeholder">Opening camera…</div>
+      </div>
+      <div class="camera-controls">
+        <div>
+          <h3>Lock follow <span id="trackMode" class="chip" aria-live="polite">Waiting</span></h3>
+          <p id="trackHint">Waiting for the camera and channel 8.</p>
+        </div>
+        <div class="sim"><span>Simulated power</span><strong id="sim">0%</strong></div>
+      </div>
+      <div class="radio-panel">
+        <div class="ref-heading"><h3>Radio inputs</h3><span class="channel">CH8 <b id="ch8">—</b></span></div>
+        <ol class="positions" aria-label="CH8 switch positions">
+          <li id="low"><b>Low</b><span>Off</span></li>
+          <li id="middle"><b>Middle</b><span>Ready / release</span></li>
+          <li id="high"><b>High</b><span>Lock center</span></li>
+        </ol>
+        <div class="channel-list" aria-label="Live channel pulses">
+          <span>Roll · CH1 <b id="ch1">—</b></span>
+          <span>Pitch · CH2 <b id="ch2">—</b></span>
+          <span>Throttle · CH3 <b id="ch3">—</b></span>
+        </div>
+        <p>The TX16S and flight controller handle propulsion. The 15% lock indicator is a browser simulation.</p>
+      </div>
+    </section>
+    <section class="panel instruments" aria-labelledby="attitudeHeading">
+      <div class="panel-head">
+        <h2 id="attitudeHeading">Pitch &amp; roll</h2>
+        <span class="chip" id="imuState">Waiting</span>
+      </div>
+      <div class="readouts">
+        <div><span>Measured pitch</span><strong id="pitchRead">—</strong></div>
+        <div><span>Measured roll</span><strong id="rollRead">—</strong></div>
+      </div>
+      <div class="gauge">
+        <canvas id="horizon" width="600" height="250" role="img" aria-label="Artificial horizon showing measured and reference angles"></canvas>
+      </div>
+      <div class="legend"><span><i></i>Measured</span><span><i></i>Reference</span></div>
+      <div class="references">
+        <div class="ref-heading"><h3>Reference angles</h3><button type="button" id="level">Reset to level</button></div>
+        <p>Move the jig by hand to match the dashed line. Sliders adjust the display only.</p>
+        <div class="slider-row">
+          <label for="pitch">Pitch</label><output id="pitchValue" for="pitch">0°</output>
+          <input id="pitch" type="range" min="-45" max="45" step="1" value="0">
+        </div>
+        <div class="slider-row">
+          <label for="roll">Roll</label><output id="rollValue" for="roll">0°</output>
+          <input id="roll" type="range" min="-45" max="45" step="1" value="0">
+        </div>
+        <div class="scale" aria-hidden="true"><span>−45°</span><span>0°</span><span>+45°</span></div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
