@@ -19,7 +19,7 @@ DEVICE = "/dev/serial/by-id/usb-MicoAir_MicoAir743v2_0-if00"
 INTEGER_TYPES = {mav.MAV_PARAM_TYPE_UINT8, mav.MAV_PARAM_TYPE_INT8, mav.MAV_PARAM_TYPE_UINT16,
                  mav.MAV_PARAM_TYPE_INT16, mav.MAV_PARAM_TYPE_UINT32, mav.MAV_PARAM_TYPE_INT32}
 # Counters and identifiers PX4 changes by itself; restoring them would be meaningless.
-VOLATILE = {"LND_FLIGHT_T_HI", "LND_FLIGHT_T_LO", "COM_FLIGHT_UUID", "SYS_RESTART_TYPE"}
+VOLATILE = {"LND_FLIGHT_T_HI", "LND_FLIGHT_T_LO", "COM_FLIGHT_UUID", "SYS_RESTART_TYPE", "_HASH_CHECK"}
 
 
 def decode(value, kind):

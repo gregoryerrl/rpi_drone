@@ -21,9 +21,9 @@ class ParamFileTests(unittest.TestCase):
 
     def test_differences_ignore_px4s_own_counters_and_float_noise(self):
         saved = {"MC_YAWRATE_K": (1.2, REAL), "SENS_BOARD_ROT": (12, INT), "LND_FLIGHT_T_LO": (5, INT),
-                 "MC_ROLL_P": (6.5, REAL)}
+                 "MC_ROLL_P": (6.5, REAL), "_HASH_CHECK": (1080809000, INT)}
         current = {"MC_YAWRATE_K": (0.6, REAL), "SENS_BOARD_ROT": (12, INT), "LND_FLIGHT_T_LO": (900, INT),
-                   "MC_ROLL_P": (6.500000001, REAL)}
+                   "MC_ROLL_P": (6.500000001, REAL), "_HASH_CHECK": (-782178000, INT)}
         self.assertEqual(differences(saved, current), {"MC_YAWRATE_K": (1.2, 0.6)})
 
 
