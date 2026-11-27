@@ -50,6 +50,7 @@ import argparse
 import math
 import signal
 import struct
+import termios
 import threading
 import time
 
@@ -446,8 +447,13 @@ class Takeover:
             if self.offering:
                 self.release("Pi script stopped")
             self.port.flush()
+        except (OSError, termios.error):
+            pass  # the flight controller's USB link is already gone; main() reconnects
         finally:
-            self.port.close()
+            try:
+                self.port.close()
+            except (OSError, termios.error):
+                pass
 
 
 def run(device=DEVICE, stop=None, say=say, camera=None, flight=False, max_tilt=MAX_TILT, thrust=THRUST,
@@ -511,7 +517,7 @@ def main():
             try:
                 run(stop=stop, camera=camera, flight=args.flight, max_tilt=math.radians(args.max_tilt),
                     thrust=thrust, max_thrust=max_thrust)
-            except (SetupError, OSError) as exc:
+            except (SetupError, OSError, termios.error) as exc:
                 # Keep the camera running and retry, logging a repeated failure only once.
                 if str(exc) != problem or time.monotonic() - started > 30:
                     say(f"{exc} Retrying every 5 s.")

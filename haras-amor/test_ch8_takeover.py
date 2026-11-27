@@ -1,6 +1,7 @@
 import asyncio
 import math
 import struct
+import termios
 import threading
 import time
 import unittest
@@ -105,6 +106,30 @@ class FakeCamera:
 
     def summary(self):
         return "fake"
+
+
+class DeadPort:
+    """A serial port whose USB device has gone, as when the FC cable is unplugged."""
+
+    def __init__(self):
+        self.closed = False
+
+    def flush(self):
+        raise termios.error(5, "Input/output error")
+
+    def write(self, data):
+        raise OSError(5, "Input/output error")
+
+    def close(self):
+        self.closed = True
+
+
+class UnpluggedTests(unittest.TestCase):
+    def test_closing_after_the_fc_is_unplugged_does_not_crash(self):
+        link = ch8_takeover.Takeover.__new__(ch8_takeover.Takeover)
+        link.port, link.offering = DeadPort(), False
+        link.close()  # main() then retries the connection every 5 s
+        self.assertTrue(link.port.closed)
 
 
 class TakeoverTests(unittest.IsolatedAsyncioTestCase):
