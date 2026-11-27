@@ -317,7 +317,7 @@ p {
   color: var(--muted);
 }
 
-.radio-test-meter meter {
+.radio-test-meter meter:not([hidden]) {
   display: block;
   width: 100%;
   max-width: 16rem;

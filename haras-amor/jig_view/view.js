@@ -13,6 +13,7 @@ let generation = 0;
 let lastFrame = -1;
 let lastDraw = 0;
 let lastBatteryDisplay;
+let showCh5Override;
 
 function badge(id, label, live) {
   const chip = byId(id);
@@ -124,12 +125,29 @@ function displayRadioMeter(status, detail, active = false, stopped = false) {
   if (chip.textContent !== status) chip.textContent = status;
   chip.classList.toggle("on", active);
   chip.classList.toggle("warning", stopped);
-  byId("radioPercent").textContent = active ? "15%" : "0%";
+  byId("radioPercent").textContent = active === null ? "—" : active ? "15%" : "0%";
+  byId("radioMeter").hidden = active === null;
   byId("radioMeter").value = active ? 15 : 0;
   byId("radioTestDetail").textContent = detail;
 }
 
 function showRadioTest(radio, rcLive) {
+  const override = radio?.ch5_override;
+  if (radio && showCh5Override !== Boolean(override)) {
+    showCh5Override = Boolean(override);
+    byId("radioTestHeading").textContent = override ? "CH8 motor test" : "TX16S switch test";
+    byId("ch5Role").textContent = override ? "Enable" : "Arm";
+    byId("switchTestHelp").hidden = Boolean(override);
+    byId("simulatorLink").hidden = Boolean(override);
+    byId("overrideHelp").hidden = !override;
+    byId("radioMeterLabel").textContent = (override ? "Pi motor command" : "Simulated Pi output") + " · M1–M4";
+  }
+  if (override) {
+    const active = override.percent === 15;
+    return displayRadioMeter(active ? "Pi control" : "Standby", override.detail, active);
+  }
+  if (showCh5Override !== false)
+    return displayRadioMeter("Waiting for Pi", "Motor command unknown until the Pi reports again.", null);
   if (typeof radio?.fc_armed !== "boolean")
     return displayRadioMeter("Waiting for FC", "Waiting for the flight controller heartbeat.");
   if (!rcLive)

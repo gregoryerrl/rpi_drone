@@ -1,0 +1,9 @@
+{
+  "roll": [440.4, 3.3],
+  "pitch": [0.0, -440.4],
+  "focal_px": 440.4,
+  "lens_hfov_deg": 72.0,
+  "nose": "top",
+  "measured": "2026-11-27T15:08:44",
+  "note": "Measured with SENS_BOARD_ROT 8; roll column sign flipped for SENS_BOARD_ROT 12 (a half-turn flips roll)."
+}

@@ -41,26 +41,27 @@
     </section>
     <section id="radio-test" class="panel" aria-labelledby="radioTestHeading">
       <div class="panel-head">
-        <h2 id="radioTestHeading">TX16S switch test</h2>
+        <h2 id="radioTestHeading">TX16S switches</h2>
         <span id="radioTestStatus" class="chip" role="status">Waiting for radio</span>
       </div>
       <div class="radio-test-body">
         <div>
           <div class="channel-list" aria-label="Live radio inputs">
-            <span>Arm · CH5 <b id="ch5">—</b></span>
+            <span><span id="ch5Role">Switch</span> · CH5 <b id="ch5">—</b></span>
             <span>Trigger · CH8 <b id="ch8">—</b></span>
             <span>Kill · CH6 <b id="ch6">—</b></span>
             <span>Stick throttle · CH3 <b id="ch3">—</b></span>
             <span>Roll · CH1 <b id="ch1">—</b></span>
             <span>Pitch · CH2 <b id="ch2">—</b></span>
           </div>
-          <p>You can leave CH5 low. Move CH8 from low or middle to high for a 20-second test. CH6 high cancels it. The TX16S and PX4 control the real motors.</p>
-          <p><a href="/switch-sim.html">Try the on-screen switches</a></p>
+          <p id="switchTestHelp" hidden>You can leave CH5 low. Move CH8 from low or middle to high for a 20-second test. CH6 high cancels it. The TX16S and PX4 control the real motors.</p>
+          <p id="overrideHelp" hidden>On the secured jig with propellers removed, enable CH5, then raise CH8 to command 15% on all four motors for up to 20 seconds. Lower either switch or raise CH6 to release them sooner.</p>
+          <p id="simulatorLink" hidden><a href="/switch-sim.html">Try the on-screen switches</a></p>
         </div>
         <div class="radio-test-meter">
-          <label for="radioMeter">Simulated Pi output · M1–M4</label>
-          <strong id="radioPercent">0%</strong>
-          <meter id="radioMeter" min="0" max="100" value="0">0%</meter>
+          <label id="radioMeterLabel" for="radioMeter">M1–M4</label>
+          <strong id="radioPercent">—</strong>
+          <meter id="radioMeter" min="0" max="100" value="0" hidden>0%</meter>
           <p id="radioTestDetail">Waiting for receiver data.</p>
         </div>
       </div>

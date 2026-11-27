@@ -1,4 +1,4 @@
-"""Live camera preview and passive flight-jig telemetry for Haras Amor."""
+"""Live Haras Amor jig telemetry with an optional CH5 motor bench override."""
 import argparse
 import asyncio
 from dataclasses import dataclass
@@ -12,6 +12,8 @@ from aiohttp import web
 import cv2
 from numpy import ndarray
 
+from jig_view.ch5 import Ch5Receiver
+from motor_preview.stop import stop_marker
 from rc_monitor.server import Receiver, SWITCH_TRACE_GAP_S
 
 
@@ -133,8 +135,9 @@ def make_app(jig):
 
     async def cleanup(app):
         jig.stop.set()
-        await asyncio.to_thread(jig.worker.join)
+        jig.receiver.stop.set()
         await asyncio.to_thread(jig.receiver.close)
+        await asyncio.to_thread(jig.worker.join)
 
     async def headers(request, response):
         response.headers.update({
@@ -161,10 +164,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bind", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8003)
-    parser.add_argument("--device", default=DEVICE, help="Read-only MAVLink serial device")
+    parser.add_argument("--device", default=DEVICE, help="MAVLink serial device")
+    parser.add_argument("--ch5-override", action="store_true",
+                        help="Enable the CH8 15%% motor test while physical CH5 is high and PX4 is disarmed")
     args = parser.parse_args()
     cv2.setNumThreads(2)
-    web.run_app(make_app(Jig(Receiver(args.device, continuous=True))), host=args.bind, port=args.port, access_log=None)
+    receiver = Ch5Receiver(args.device, stop_marker()) if args.ch5_override else Receiver(args.device, continuous=True)
+    web.run_app(make_app(Jig(receiver)), host=args.bind, port=args.port, access_log=None)
 
 
 if __name__ == "__main__":

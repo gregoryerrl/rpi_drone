@@ -1,0 +1,15 @@
+# Bench-only CH8 handover to the Pi at 20% thrust (see ch8_takeover.py). Holds the FC USB port.
+# Install from haras-amor:
+#   ln -sf "$PWD/ch8-takeover.service" ~/.config/systemd/user/ch8-takeover.service
+#   systemctl --user daemon-reload && systemctl --user enable --now ch8-takeover.service
+[Unit]
+Description=Haras Amor CH8 handover to the Pi (bench only)
+
+[Service]
+WorkingDirectory=%h/rpi_drone/haras-amor
+ExecStart=%h/rpi_drone/haras-amor/venv/bin/python -u ch8_takeover.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

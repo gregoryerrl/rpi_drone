@@ -30,7 +30,7 @@ class MotorStopped(BenchError):
 
 
 class MotorLink:
-    def __init__(self, device):
+    def __init__(self, device, *, radio_override=None):
         self.loop = asyncio.get_running_loop()
         self.port = Serial(device, 57600, timeout=0, write_timeout=0.03, exclusive=True)
         try:
@@ -38,6 +38,7 @@ class MotorLink:
             self.wire = mav.MAVLink(self.port, srcSystem=255, srcComponent=190)
             self.wire.robust_parsing = True
             self.system = None
+            self.radio_override = radio_override
             self.last_heartbeat = 0.0
             self.seen = asyncio.Event()
             self.fault = None
@@ -65,36 +66,39 @@ class MotorLink:
         try:
             data = self.port.read(16384)
             for msg in self.wire.parse_buffer(data) or ():
-                if msg.get_srcComponent() != mav.MAV_COMP_ID_AUTOPILOT1:
-                    continue
                 if self.system is not None and msg.get_srcSystem() != self.system:
                     continue
-                if msg.get_type() == "HEARTBEAT" and (msg.autopilot != mav.MAV_AUTOPILOT_PX4
-                                                     or msg.type != mav.MAV_TYPE_QUADROTOR):
-                    self._fail("Expected a PX4 quadrotor on this USB port.")
-                    continue
-                if self.system is not None or msg.get_type() == "HEARTBEAT":
-                    self.jig.observe(msg, time.monotonic())
-                if msg.get_type() == "HEARTBEAT":
-                    if self.jig.armed and not (self.jig.selected or self.jig.stop_pending):
-                        self._fail("Flight controller armed. Bench control stopped.")
-                    else:
-                        self.system = msg.get_srcSystem()
-                        self.last_heartbeat = time.monotonic()
-                        self.seen.set()
-                elif (msg.get_type() == "COMMAND_ACK" and self.waiting is not None
-                      and not self.waiting.done() and msg.command == self.command
-                      and msg.target_system in (0, 255) and msg.target_component in (0, 190)):
-                    self.waiting.set_result(msg.result)
-                elif self.system is not None and msg.get_type() == "ATTITUDE":
-                    self.leveling.observe(msg.time_boot_ms, msg.roll, msg.pitch, msg.rollspeed,
-                                          msg.pitchspeed, time.monotonic())
-                elif self.system is not None and msg.get_type() == "PARAM_VALUE":
-                    self._geometry_value(msg)
+                now = time.monotonic()
+                if msg.get_srcComponent() == mav.MAV_COMP_ID_AUTOPILOT1:
+                    self._observe_fc(msg, now)
+                if self.radio_override is not None and self.system is not None and not self.fault:
+                    self.radio_override.observe(self, msg, now)
             self._read_missing_geometry(time.monotonic())
         except (OSError, mav.MAVError) as exc:
             self.loop.remove_reader(self.port.fileno())
             self._fail(f"Flight controller disconnected: {exc}")
+
+    def _observe_fc(self, msg, now):
+        kind = msg.get_type()
+        if kind == "HEARTBEAT" and (msg.autopilot != mav.MAV_AUTOPILOT_PX4 or msg.type != mav.MAV_TYPE_QUADROTOR):
+            self._fail("Expected a PX4 quadrotor on this USB port.")
+            return
+        if self.system is not None or kind == "HEARTBEAT":
+            self.jig.observe(msg, now)
+        if kind == "HEARTBEAT":
+            if self.jig.armed and self.radio_override is None and not (self.jig.selected or self.jig.stop_pending):
+                self._fail("Flight controller armed. Bench control stopped.")
+            else:
+                self.system = msg.get_srcSystem()
+                self.last_heartbeat = now
+                self.seen.set()
+        elif (kind == "COMMAND_ACK" and self.waiting is not None and not self.waiting.done()
+              and msg.command == self.command and msg.target_system in (0, 255) and msg.target_component in (0, 190)):
+            self.waiting.set_result(msg.result)
+        elif self.system is not None and kind == "ATTITUDE":
+            self.leveling.observe(msg.time_boot_ms, msg.roll, msg.pitch, msg.rollspeed, msg.pitchspeed, now)
+        elif self.system is not None and kind == "PARAM_VALUE":
+            self._geometry_value(msg)
 
     def _geometry_value(self, msg):
         name = msg.param_id
@@ -131,6 +135,9 @@ class MotorLink:
         if (command == mav.MAV_CMD_ACTUATOR_TEST and params[:2] != (0, 0)
                 and (self.outputs_stopped or self.jig.selected or self.jig.stop_pending or self.jig.armed)):
             raise MotorStopped("Bench motor stop latched.")
+        if command == mav.MAV_CMD_ACTUATOR_TEST and params[1] > 0 and self.radio_override is not None:
+            duration = self.radio_override.pulse_duration(self, params[0], params[1])
+            params = (params[0], duration, *params[2:])
         if (command == mav.MAV_CMD_COMPONENT_ARM_DISARM and params[0]
                 and (self.outputs_stopped or not self.jig.selected or not self.jig.confirmed)):
             raise MotorStopped("Jig arming blocked.")
@@ -162,7 +169,8 @@ class MotorLink:
         self.wire.heartbeat_send(mav.MAV_TYPE_GCS, mav.MAV_AUTOPILOT_INVALID, 0, 0, 0)
         await self._confirmed(1.5, mav.MAV_CMD_REQUEST_MESSAGE,
                               mav.MAVLINK_MSG_ID_AUTOPILOT_VERSION, 0, 0, 0, 0, 0, 0)
-        self.next_geometry_read = time.monotonic()
+        if self.radio_override is None:
+            self.next_geometry_read = time.monotonic()
 
     def _cancel_cutoff(self):
         if self.bench_cutoff is not None:

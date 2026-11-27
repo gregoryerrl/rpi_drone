@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Haras Amor camera</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0f1412; --panel: #18201c; --line: #2a352f; --text: #ecf3ee; --muted: #9fb2a6;
+    --ok: #6fdc95; --warn: #f2b45c; --bad: #f07a6c;
+    font: 16px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--bg); color: var(--text);
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }  /* class display rules must not override hidden */
+  body { margin: 0; background: var(--bg); }
+  main { max-width: 1100px; margin: 0 auto; padding: 16px; display: grid; gap: 16px; }
+  header { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+  h1 { font-size: clamp(1.3rem, 3.5vw, 1.8rem); margin: 0; letter-spacing: -.02em; }
+  .chip { display: inline-flex; align-items: center; gap: 8px; padding: 4px 12px; border-radius: 999px;
+          background: var(--panel); border: 1px solid var(--line); font-weight: 600; font-size: .9rem; }
+  .chip::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+  .ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); } .idle { color: var(--muted); }
+  .layout { display: grid; gap: 16px; grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr); align-items: start; }
+  @media (max-width: 800px) { .layout { grid-template-columns: 1fr; } }
+  .view { position: relative; background: #050806; border: 1px solid var(--line); border-radius: 10px;
+          overflow: hidden; aspect-ratio: 16 / 9; }
+  .view img { display: block; width: 100%; height: 100%; object-fit: contain; }
+  .offline { position: absolute; inset: 0; display: grid; place-items: center; padding: 16px; text-align: center;
+             color: var(--muted); background: rgba(5, 8, 6, .85); }
+  .side { display: grid; gap: 16px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  h2 { font-size: .78rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 8px; }
+  dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0; }
+  dt { color: var(--muted); }
+  dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+  .status { font-size: 1.4rem; font-weight: 700; margin: 0 0 4px; }
+  .message { color: var(--muted); margin: 0; min-height: 2.9em; }
+  .target { position: relative; aspect-ratio: 16 / 9; margin-top: 12px; background: #0c110e;
+            border: 1px solid var(--line); border-radius: 6px; }
+  .target::before, .target::after { content: ""; position: absolute; background: var(--line); }
+  .target::before { left: 50%; top: 0; bottom: 0; width: 1px; }
+  .target::after { top: 50%; left: 0; right: 0; height: 1px; }
+  .target i { position: absolute; z-index: 1; width: 10px; height: 10px; margin: -5px 0 0 -5px;
+              border-radius: 50%; background: var(--ok); }
+  .note { color: var(--muted); font-size: .85rem; margin: 6px 0 0; min-height: 1.3em; }
+  .switch { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 10px; }
+  .switch span { text-align: center; padding: 6px 4px; border: 1px solid var(--line); border-radius: 6px;
+                 color: var(--muted); font-size: .85rem; }
+  .switch span.on { color: var(--text); border-color: var(--ok); background: #22302a; }
+  footer { color: var(--muted); font-size: .85rem; }
+</style>
+<main>
+  <header>
+    <h1>Haras Amor camera</h1>
+    <span id="link" class="chip idle" role="status">Connecting…</span>
+  </header>
+  <div class="layout">
+    <div class="view">
+      <img id="view" width="640" height="360"
+           alt="Live aircraft camera. The white box marks what CH8 middle locks; a coloured box tracks the locked object.">
+      <div id="offline" class="offline">Waiting for video…</div>
+    </div>
+    <div class="side">
+      <section class="panel" aria-labelledby="lock-title">
+        <h2 id="lock-title">Target lock</h2>
+        <p id="mode" class="status idle">–</p>
+        <p id="message" class="message" aria-live="polite"></p>
+        <div class="target" title="Where the locked object is in the picture"><i id="marker" hidden></i></div>
+        <p id="offset" class="note"></p>
+      </section>
+      <section class="panel" aria-labelledby="ch8-title">
+        <h2 id="ch8-title">CH8 switch</h2>
+        <dl><dt>Pulse</dt><dd id="pulse">–</dd></dl>
+        <div class="switch">
+          <span id="low">Low · unlock</span><span id="middle">Middle · lock</span><span id="high">High · follow</span>
+        </div>
+      </section>
+      <section class="panel" aria-labelledby="camera-title">
+        <h2 id="camera-title">Camera</h2>
+        <dl>
+          <dt>Status</dt><dd id="camera">–</dd>
+          <dt>Frame rate</dt><dd id="fps">–</dd>
+          <dt>Frame age</dt><dd id="age">–</dd>
+          <dt>Resolution</dt><dd id="size">–</dd>
+        </dl>
+      </section>
+      <section class="panel" aria-labelledby="drone-title">
+        <h2 id="drone-title">Drone</h2>
+        <dl>
+          <dt>Flight controller</dt><dd id="fc">–</dd>
+          <dt>PX4 mode</dt><dd id="fcmode">–</dd>
+          <dt>In control</dt><dd id="control">–</dd>
+          <dt>Attitude</dt><dd id="attitude">–</dd>
+          <dt>Pi</dt><dd id="pi">–</dd>
+          <dt>Pi setting</dt><dd id="setting">–</dd>
+          <dt>Pi target</dt><dd id="tilt">–</dd>
+          <dt>Pi thrust</dt><dd id="thrust">–</dd>
+          <dt>Height</dt><dd id="height">–</dd>
+        </dl>
+      </section>
+    </div>
+  </div>
+  <footer>CH8 low unlocks, middle locks the object in the white box, and high lets the Pi tilt the drone (roll and
+    pitch, within its tilt limit) to keep it in the middle. Stand setting: 20% thrust, rising to 50% while the drone has to lean; frame strapped down.
+    Flight setting: the Pi holds height; keep your throttle stick at hover so taking control back is smooth.</footer>
+</main>
+<script>
+const el = id => document.getElementById(id);
+const tones = {Unlocked: 'idle', Locking: 'warn', Locked: 'ok', Following: 'ok', Holding: 'warn', Lost: 'bad',
+               'Camera off': 'bad'};
+function tone(node, name) {
+  node.classList.remove('ok', 'warn', 'bad', 'idle');
+  node.classList.add(name);
+}
+const clamp = v => Math.max(-1, Math.min(1, v));
+const side = (v, positive, negative) => Math.round(Math.abs(v) * 100) + '% ' + (v >= 0 ? positive : negative);
+function standThrust(d) {
+  const base = Math.round((d.stand_thrust || 0.2) * 100);
+  const top = Math.round((d.stand_max_thrust || d.stand_thrust || 0.2) * 100);
+  return base === top ? 'Stand: fixed ' + base + '%' : 'Stand: ' + base + '–' + top + '% thrust';
+}
+const angles = (roll, pitch) => 'roll ' + (roll > 0 ? '+' : '') + roll.toFixed(1) + '° · pitch '
+                                + (pitch > 0 ? '+' : '') + pitch.toFixed(1) + '°';
+function show(state) {
+  tone(el('mode'), tones[state.mode] || 'idle');
+  el('mode').textContent = state.mode;
+  if (el('message').textContent !== state.message) el('message').textContent = state.message;
+  const o = state.offset;
+  el('marker').hidden = !o;
+  if (o) {
+    el('marker').style.left = (50 + 50 * clamp(o[0])) + '%';
+    el('marker').style.top = (50 + 50 * clamp(o[1])) + '%';
+  }
+  el('offset').textContent = o ? 'Object ' + side(o[0], 'right', 'left') + ', ' + side(o[1], 'down', 'up') : '';
+  el('pulse').textContent = state.ch8 == null ? 'No radio' : state.ch8 + ' µs';
+  const place = state.ch8 == null ? null : state.ch8 < 1250 ? 'low' : state.ch8 <= 1750 ? 'middle' : 'high';
+  for (const p of ['low', 'middle', 'high']) el(p).classList.toggle('on', p === place);
+  el('camera').textContent = state.mode === 'Camera off' ? 'Off' : 'Live';
+  el('fps').textContent = state.fps == null ? '–' : state.fps.toFixed(1) + ' fps';
+  el('age').textContent = state.age_ms == null ? '–' : state.age_ms + ' ms';
+  el('size').textContent = state.size ? state.size.join(' × ') : '–';
+  const d = state.drone;
+  el('fc').textContent = d ? (d.armed ? 'Armed' : 'Disarmed') : 'No heartbeat';
+  el('fcmode').textContent = d ? d.mode : '–';
+  el('control').textContent = !d || !d.control ? '–' : d.control === 'pilot' ? 'You'
+    : state.mode === 'Following' && o ? 'Pi, tilting toward the object' : 'Pi, easing to level';
+  el('attitude').textContent = d && d.roll != null ? angles(d.roll, d.pitch) : '–';
+  el('tilt').textContent = d && d.target ? angles(d.target[0], d.target[1]) : '–';
+  el('pi').textContent = d && d.pi ? d.pi.charAt(0).toUpperCase() + d.pi.slice(1) : '–';
+  el('setting').textContent = !d ? '–' : (d.setting === 'flight' ? 'Flight: holds height' : standThrust(d))
+    + (d.max_tilt == null ? '' : ', tilt up to ' + d.max_tilt + '°');
+  el('thrust').textContent = !d || d.thrust == null ? '–' : Math.round(d.thrust * 100) + '%'
+    + (d.below_hold == null ? '' : ', ' + Math.abs(d.below_hold).toFixed(2) + ' m '
+       + (d.below_hold > 0 ? 'below' : 'above') + ' the hold');
+  el('height').textContent = d && d.height != null
+    ? (d.height > 0 ? '+' : '') + d.height.toFixed(1) + ' m since arming' : '–';
+}
+function deadline(ms) {  // AbortSignal.timeout is missing from older phone browsers
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), ms);
+  return controller.signal;
+}
+let previous;
+async function next() {
+  try {
+    if (document.hidden) return;
+    const r = await fetch('frame.jpg', {cache: 'no-store', signal: deadline(2500)});
+    if (!r.ok) throw Error((await r.json()).error);
+    const state = JSON.parse(r.headers.get('X-Camera'));
+    const url = URL.createObjectURL(await r.blob());
+    el('view').src = url;
+    if (previous) URL.revokeObjectURL(previous);
+    previous = url;
+    el('offline').hidden = true;
+    tone(el('link'), 'ok');
+    el('link').textContent = 'Live';
+    show(state);
+  } catch (e) {
+    el('offline').hidden = false;
+    el('offline').textContent = e.message || 'Camera offline';
+    tone(el('link'), 'bad');
+    el('link').textContent = 'Offline';
+    try { show(await (await fetch('api/state', {cache: 'no-store'})).json()); } catch {}
+  } finally {
+    setTimeout(next, document.hidden ? 700 : 65);
+  }
+}
+next();
+</script>
+</html>

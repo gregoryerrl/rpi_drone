@@ -1,4 +1,4 @@
-"""Repeatable props-off, disarmed CH8 bench runs at 20% for up to 20 seconds.
+"""Repeatable props-off, disarmed CH8 bench runs at 20% that last until CH8 is lowered.
 
 Run venv/bin/python ch8_bench.py from haras-amor. Lower CH8 or raise CH6 to stop a run.
 Cycle CH8 low then high for another run. Ctrl-C exits the session.
@@ -12,8 +12,9 @@ from pymavlink.dialects.v20 import common as mav
 
 class Ch8BenchLink(motors.MotorLink):
     def _bench_pulse(self, percent):
-        # Use the driver’s timed pulse budget for every positive bench command.
-        return super()._bench_pulse(motors.TIMED_BENCH_PERCENT if percent else 0)
+        # No session cutoff: a run lasts while CH8 stays high. Each command is a
+        # short PX4 pulse that the loop renews, so the motors stop if renewals stop.
+        return motors.PULSE_SECONDS
 
 
 async def once(device=motors.DEFAULT_DEVICE):
@@ -94,15 +95,18 @@ async def once(device=motors.DEFAULT_DEVICE):
                 raise motors.BenchError('interlock')
             if started is None:
                 started = time.monotonic()
-        elif cmd != mav.MAV_CMD_REQUEST_MESSAGE:
+        elif cmd not in (mav.MAV_CMD_REQUEST_MESSAGE, mav.MAV_CMD_SET_MESSAGE_INTERVAL):
             raise motors.BenchError('bench only')
         send_command(cmd, *params)
     link._send = write
-    link._expire_timed_run = lambda: stop('20-second cutoff')
     for s in (signal.SIGINT, signal.SIGTERM):
         asyncio.get_running_loop().add_signal_handler(s, stop, 'operator stop')
     try:
         await link.ready()
+        # Ask for 20 Hz receiver updates so the 0.25 s radio-loss checks are not
+        # tripped by a slower RC_CHANNELS rate left configured by another tool.
+        await link._confirmed(1.5, mav.MAV_CMD_SET_MESSAGE_INTERVAL,
+                              mav.MAVLINK_MSG_ID_RC_CHANNELS, 50000, 0, 0, 0, 0, 0)
         listening = True
         print('Ready. Keep CH5 and CH6 low, then move CH8 from low to high.', flush=True)
         until = time.monotonic() + 120
@@ -138,7 +142,7 @@ async def once(device=motors.DEFAULT_DEVICE):
         print(stop_reason, 'elapsed', round(stop_time - started, 3) if started else None, 'batches', accepted, 'released', sorted(releases), 'acks', acks, 'armed', link.jig.armed)
 
     return (not exit_requested and not link.jig.armed and not link.fault
-            and stop_reason in ('CH6 stop', 'CH8 lowered', '20-second cutoff')
+            and stop_reason in ('CH6 stop', 'CH8 lowered')
             and releases == set(motors.MOTORS) and acks >= len(releases))
 
 
