@@ -1,13 +1,16 @@
-# Bench-only CH8 handover to the Pi at 20% thrust (see ch8_takeover.py). Holds the FC USB port.
-# Install from haras-amor:
+# CH8 lock-and-follow on the jig (see ch8_takeover.py), started at boot: the stand setting, with
+# 20% thrust rising to 50% while the drone has to lean, and no tilt cap. Holds the FC USB port and
+# the camera; the camera website is on port 8004.
+# Install from haras-amor (needs lingering, so it starts at boot without a login:
+# sudo loginctl enable-linger "$USER"):
 #   ln -sf "$PWD/ch8-takeover.service" ~/.config/systemd/user/ch8-takeover.service
 #   systemctl --user daemon-reload && systemctl --user enable --now ch8-takeover.service
 [Unit]
-Description=Haras Amor CH8 handover to the Pi (bench only)
+Description=Haras Amor CH8 lock-and-follow (jig, stand setting)
 
 [Service]
 WorkingDirectory=%h/rpi_drone/haras-amor
-ExecStart=%h/rpi_drone/haras-amor/venv/bin/python -u ch8_takeover.py
+ExecStart=%h/rpi_drone/haras-amor/venv/bin/python -u ch8_takeover.py --max-tilt 90
 Restart=always
 RestartSec=5
 
