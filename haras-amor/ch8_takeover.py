@@ -417,11 +417,14 @@ class Takeover:
             if time.monotonic() > deadline:
                 raise SetupError("No PX4 quadrotor heartbeat on USB.")
             self.pump()
-        self.wire.param_request_read_send(self.system, 1, b"RC_MAP_OFFB_SW", -1)
-        deadline = time.monotonic() + 2
+        # Ask again every 0.5 s: PX4 can drop the first request on a freshly connected USB link.
+        deadline, ask = time.monotonic() + 3, 0.0
         while "RC_MAP_OFFB_SW" not in self.params:
             if time.monotonic() > deadline:
                 raise SetupError("PX4 did not report RC_MAP_OFFB_SW.")
+            if time.monotonic() >= ask:
+                self.wire.param_request_read_send(self.system, 1, b"RC_MAP_OFFB_SW", -1)
+                ask = time.monotonic() + 0.5
             self.pump()
         if self.params["RC_MAP_OFFB_SW"] != 8:
             raise SetupError(f"PX4 RC_MAP_OFFB_SW is {self.params['RC_MAP_OFFB_SW']}. "
